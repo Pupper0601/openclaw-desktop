@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import { createTray } from './tray';
 import { initI18n, setLanguage, t } from './i18n';
 import * as crypto from 'crypto';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync, execSync } from 'child_process';
 // node-pty: dynamic require — graceful fallback if native module unavailable
 let pty: typeof import('node-pty') | null = null;
 try {
@@ -446,6 +446,8 @@ function setupIPC(): void {
     return { success: true };
   });
 
+  // TODO(v6): Unify config storage — currently aegis-config.json and localStorage
+  // can drift. See Bug #10 in AEGIS Desktop backlog (memory #1689).
   // ── Settings: sync individual key from UI (localStorage) → aegis-config.json ──
   ipcMain.handle('settings:save', (_e, key: string, value: any) => {
     const configKeyMap: Partial<Record<string, keyof AegisConfig>> = {
@@ -565,8 +567,6 @@ function setupIPC(): void {
   });
 
   ipcMain.handle('config:restart', async () => {
-    const { execSync } = require('child_process');
-
     // Strategy 1: OpenClaw CLI (native Windows install)
     try {
       execSync('openclaw gateway restart', { timeout: 15000, windowsHide: true });
@@ -1263,9 +1263,8 @@ function registerHotkey(): void {
   }
   // ── Secrets ──
   ipcMain.handle('secrets:audit', async () => {
-    const { spawnSync } = require('child_process');
-    const npmGlobal = process.env.APPDATA ? `${process.env.APPDATA}\npm` : '';
-    const extraPath = [npmGlobal, 'C:\Program Files\nodejs', process.env.PATH].filter(Boolean).join(';');
+    const npmGlobal = process.env.APPDATA ? `${process.env.APPDATA}\\npm` : '';
+    const extraPath = [npmGlobal, 'C:\\Program Files\\nodejs', process.env.PATH].filter(Boolean).join(';');
     const result = spawnSync('openclaw', ['secrets', 'audit'], {
       timeout: 12000,
       windowsHide: true,
@@ -1276,16 +1275,30 @@ function registerHotkey(): void {
     });
     if (result.error) return { success: false, error: (result.error as Error).message };
     const exitCode = result.status ?? -1;
+    const stdout = (result.stdout ?? '').trim();
     const statusMap: Record<number, string> = { 0: 'clean', 1: 'findings', 2: 'unresolved' };
+
+    // Primary: use exit code
+    let status = statusMap[exitCode] ?? 'unknown';
+
+    // Fallback: if exit code is 0 but stdout contains finding indicators, override
+    if (status === 'clean' && stdout) {
+      const lower = stdout.toLowerCase();
+      if (lower.includes('plaintext') || lower.includes('finding') || lower.includes('exposed') || lower.includes('leaked')) {
+        status = 'findings';
+      } else if (lower.includes('unresolved') || lower.includes('could not resolve')) {
+        status = 'unresolved';
+      }
+    }
+
     return {
       success: true,
-      data: { status: statusMap[exitCode] ?? 'unknown', rawOutput: (result.stdout ?? '').trim(), exitCode },
+      data: { status, rawOutput: stdout, exitCode },
     };
   });
   ipcMain.handle('secrets:reload', async () => {
-    const { spawnSync } = require('child_process');
-    const npmGlobal = process.env.APPDATA ? `${process.env.APPDATA}\npm` : '';
-    const extraPath = [npmGlobal, 'C:\Program Files\nodejs', process.env.PATH].filter(Boolean).join(';');
+    const npmGlobal = process.env.APPDATA ? `${process.env.APPDATA}\\npm` : '';
+    const extraPath = [npmGlobal, 'C:\\Program Files\\nodejs', process.env.PATH].filter(Boolean).join(';');
     const result = spawnSync('openclaw', ['secrets', 'reload'], {
       timeout: 10000,
       windowsHide: true,
@@ -1391,5 +1404,5 @@ app.on('before-quit', () => {
   ptyProcesses.clear();
 });
 
-console.log('Æ AEGIS Desktop v5.4.1 started');
+console.log('Æ AEGIS Desktop v5.5.0 started');
 

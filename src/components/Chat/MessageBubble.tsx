@@ -1,64 +1,18 @@
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, User, RotateCcw, Eye, Code2 } from 'lucide-react';
+import { Copy, Check, User, RotateCcw, Eye, Code2, RefreshCw, Pencil, ChevronDown, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getDirection } from '@/i18n';
 import { CodeBlock } from './CodeBlock';
 import { ChatImage } from './ChatImage';
 import { ChatVideo } from './ChatVideo';
 import { AudioPlayer } from './AudioPlayer';
-import type { ChatMessage } from '@/stores/chatStore';
-import { autoDetectCode } from '@/utils/autoDetectCode';
+import type { MessageBlock, Artifact, MetaItem } from '@/types/RenderBlock';
 import clsx from 'clsx';
 
-// ── Artifact Parser ──
-interface ParsedArtifact {
-  type: string;
-  title: string;
-  content: string;
-}
-
-function parseArtifacts(text: string): { parts: Array<{ kind: 'text' | 'artifact'; text?: string; artifact?: ParsedArtifact }>} {
-  const regex = /<aegis_artifact\s+type="([^"]+)"\s+title="([^"]*)">([\s\S]*?)<\/aegis_artifact>/g;
-  const parts: Array<{ kind: 'text' | 'artifact'; text?: string; artifact?: ParsedArtifact }> = [];
-  let lastIndex = 0;
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    // Text before artifact
-    if (match.index > lastIndex) {
-      const before = text.slice(lastIndex, match.index).trim();
-      if (before) parts.push({ kind: 'text', text: before });
-    }
-    // Artifact
-    parts.push({
-      kind: 'artifact',
-      artifact: {
-        type: match[1],
-        title: match[2],
-        content: match[3].trim(),
-      },
-    });
-    lastIndex = match.index + match[0].length;
-  }
-
-  // Remaining text after last artifact
-  if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex).trim();
-    if (remaining) parts.push({ kind: 'text', text: remaining });
-  }
-
-  // No artifacts found — return full text
-  if (parts.length === 0) {
-    parts.push({ kind: 'text', text });
-  }
-
-  return { parts };
-}
-
 // ── Artifact Card Component ──
-function ArtifactCard({ artifact }: { artifact: ParsedArtifact }) {
+function ArtifactCard({ artifact }: { artifact: Artifact }) {
   const [opening, setOpening] = useState(false);
 
   const typeIcons: Record<string, string> = {
@@ -117,13 +71,72 @@ function ArtifactCard({ artifact }: { artifact: ParsedArtifact }) {
   );
 }
 
+// ── Collapsed Meta — thinking, workshop, system under reply ──
+function CollapsedMeta({ items }: { items: MetaItem[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  return (
+    <div className="mt-2 pt-2 border-t border-[rgb(var(--aegis-overlay)/0.06)]">
+      <div className="flex flex-wrap gap-1.5">
+        {items.map((item, idx) => (
+          <div key={idx} className="w-full">
+            <button
+              onClick={() => setExpandedIdx(expandedIdx === idx ? null : idx)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px]
+                text-aegis-text-dim hover:text-aegis-text-muted hover:bg-[rgb(var(--aegis-overlay)/0.04)]
+                transition-colors"
+            >
+              {expandedIdx === idx ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              {item.label}
+            </button>
+            {expandedIdx === idx && (
+              <pre className="mt-1 mx-1 p-2.5 rounded-lg text-[11px] leading-relaxed text-aegis-text-muted
+                bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.05)]
+                whitespace-pre-wrap break-words max-h-[300px] overflow-y-auto font-[inherit]">
+                {item.content}
+              </pre>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════
 // Message Bubble — Colors fixed for dark theme visibility
 // ═══════════════════════════════════════════════════════════
 
 interface MessageBubbleProps {
-  message: ChatMessage;
+  block: MessageBlock;
   onResend?: (content: string) => void;
+  onRegenerate?: () => void;
+}
+
+// ── File Card Component ──
+function FileCard({ path, meta }: { path: string; meta?: string }) {
+  const name = path.split(/[/\\]/).pop() || path;
+  const ext = name.split('.').pop()?.toLowerCase() || '';
+  const icon: Record<string, string> = {
+    pdf: '📕', doc: '📘', docx: '📘', xls: '📗', xlsx: '📗', csv: '📗',
+    png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🎨', webp: '🖼️',
+    mp3: '🎵', wav: '🎵', ogg: '🎵', mp4: '🎬', mkv: '🎬', mov: '🎬',
+    zip: '📦', tar: '📦', gz: '📦', '7z': '📦', rar: '📦',
+    ts: '📝', tsx: '📝', js: '📝', jsx: '📝', py: '📝', rs: '📝', go: '📝',
+    json: '📋', yaml: '📋', yml: '📋', toml: '📋', md: '📝', txt: '📝',
+  };
+
+  return (
+    <div className="inline-flex items-center gap-2 px-3 py-1.5 my-1 rounded-lg
+      bg-[rgb(var(--aegis-overlay)/0.05)] border border-[rgb(var(--aegis-overlay)/0.08)]
+      hover:border-aegis-primary/20 transition-colors cursor-default max-w-full">
+      <span className="text-base shrink-0">{icon[ext] || '📄'}</span>
+      <div className="min-w-0 flex flex-col">
+        <span className="text-[12px] font-medium text-aegis-text truncate">{name}</span>
+        {meta && <span className="text-[10px] text-aegis-text-dim">{meta}</span>}
+      </div>
+    </div>
+  );
 }
 
 // ── Shared Markdown Components ──
@@ -160,6 +173,22 @@ const markdownComponents = {
     }
     return <ChatImage src={src} alt={alt} maxWidth="100%" maxHeight="400px" />;
   },
+  p({ children }: any) {
+    // Detect file references: 📎 file: <path> (mime, size)
+    if (typeof children === 'string' || (Array.isArray(children) && children.length === 1 && typeof children[0] === 'string')) {
+      const text = typeof children === 'string' ? children : children[0];
+      const fileMatch = text.match(/^📎\s*file:\s*(.+?)(?:\s*\(([^)]+)\))?\s*$/);
+      if (fileMatch) {
+        return <FileCard path={fileMatch[1].trim()} meta={fileMatch[2]?.trim()} />;
+      }
+      // Voice reference: 🎤 [voice] <path> (duration)
+      const voiceMatch = text.match(/^🎤\s*\[voice\]\s*(.+?)(?:\s*\(([^)]+)\))?\s*$/);
+      if (voiceMatch) {
+        return <FileCard path={voiceMatch[1].trim()} meta={voiceMatch[2]?.trim() || 'voice'} />;
+      }
+    }
+    return <p>{children}</p>;
+  },
   a({ href, children }: any) {
     // Check if link is a video
     const videoExtensions = /\.(mp4|webm|mov|avi|mkv|m4v|ogg)(\?.*)?$/i;
@@ -178,49 +207,27 @@ const markdownComponents = {
   },
 };
 
-export const MessageBubble = memo(function MessageBubble({ message, onResend }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ block, onResend, onRegenerate }: MessageBubbleProps) {
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [showActions, setShowActions] = useState(false);
-  const isUser = message.role === 'user';
-  const isStreaming = message.isStreaming;
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+  const isUser = block.role === 'user';
   const dir = getDirection(i18n.language);
 
+  // block.markdown is already cleaned, directives stripped, code detected
+  const content = block.markdown;
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(message.content);
+    await navigator.clipboard.writeText(content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const extractText = (val: any): string => {
-    if (typeof val === 'string') return val;
-    if (val == null) return '';
-    if (Array.isArray(val)) {
-      return val.map((b: any) => {
-        if (typeof b === 'string') return b;
-        if (b?.type === 'text' && typeof b.text === 'string') return b.text;
-        if (typeof b?.text === 'string') return b.text;
-        return '';
-      }).join('');
-    }
-    if (typeof val === 'object') {
-      if (typeof val.text === 'string') return val.text;
-      if (typeof val.content === 'string') return val.content;
-      if (Array.isArray(val.content)) return extractText(val.content);
-      return JSON.stringify(val);
-    }
-    return String(val);
-  };
-
-  const rawContent = extractText(message.content);
-
-  const cleanContent = isUser
-    ? rawContent.replace(/^\[.*?\]\s*/, '').replace(/\n\[message_id:.*?\]$/, '')
-    : autoDetectCode(rawContent);
-
   const timeStr = (() => {
     try {
-      const d = new Date(message.timestamp);
+      const d = new Date(block.timestamp);
       if (isNaN(d.getTime())) return '';
       const locale = i18n.language?.startsWith('ar') ? 'ar-SA' : 'en-US';
       return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
@@ -260,86 +267,100 @@ export const MessageBubble = memo(function MessageBubble({ message, onResend }: 
             isUser
               ? 'rounded-tl-md bg-aegis-primary/[0.12] border border-aegis-primary/20'
               : 'rounded-tr-md bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.06)]',
-            isStreaming && 'border-aegis-primary/30'
+            block.isStreaming && 'border-aegis-primary/30'
           )}
         >
           {/* Streaming shimmer */}
-          {isStreaming && (
+          {block.isStreaming && (
             <div className="absolute -top-px left-0 right-0 h-[2px] overflow-hidden rounded-full">
               <div className="w-full h-full bg-gradient-to-r from-transparent via-aegis-primary/50 to-transparent animate-shimmer bg-[length:200%_100%]" />
             </div>
           )}
 
           {/* Audio Player */}
-          {message.mediaUrl && !isStreaming && (
+          {block.audio && !block.isStreaming && (
             <div className="mb-2">
-              <AudioPlayer src={message.mediaUrl} />
+              <AudioPlayer src={block.audio} />
             </div>
           )}
 
-          {/* Attached images */}
-          {message.attachments && message.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-2">
-              {message.attachments
-                .filter((att) => att.mimeType?.startsWith('image/'))
-                .map((att, i) => (
-                  <ChatImage
-                    key={i}
-                    src={att.content}
-                    alt={att.fileName || t('media.attachment')}
-                    maxWidth="280px"
-                    maxHeight="200px"
-                  />
-                ))}
+          {/* Images from attachments — grid layout for multiple */}
+          {block.images.length > 0 && (
+            <div className={clsx(
+              'mb-2 gap-1.5',
+              block.images.length === 1 ? 'flex' :
+              block.images.length === 2 ? 'grid grid-cols-2' :
+              block.images.length === 3 ? 'grid grid-cols-2' :
+              'grid grid-cols-2 sm:grid-cols-3'
+            )}>
+              {block.images.map((img, i) => (
+                <ChatImage
+                  key={i}
+                  src={img.src}
+                  alt={img.alt || t('media.attachment')}
+                  maxWidth={block.images.length === 1 ? '360px' : '100%'}
+                  maxHeight={block.images.length === 1 ? '300px' : '180px'}
+                />
+              ))}
             </div>
           )}
 
-          {isUser ? (
-            <div className="markdown-body text-[14px] leading-relaxed text-aegis-text">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                {cleanContent}
-              </ReactMarkdown>
+          {/* Message text (markdown) or Edit mode */}
+          {isEditing ? (
+            <div className="w-full">
+              <textarea
+                autoFocus
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                className="w-full bg-[rgb(var(--aegis-overlay)/0.04)] rounded-lg p-2 text-[13px] text-aegis-text border border-aegis-border outline-none focus:border-aegis-primary/30 resize-y min-h-[60px]"
+                rows={Math.min(editText.split('\n').length + 1, 8)}
+              />
+              <div className="flex gap-1.5 mt-1.5">
+                <button
+                  onClick={() => { onResend?.(editText); setIsEditing(false); }}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-aegis-primary/10 text-aegis-primary border border-aegis-primary/20 hover:bg-aegis-primary/20 transition-colors"
+                >
+                  {t('chat.sendEdit', 'Send')}
+                </button>
+                <button
+                  onClick={() => setIsEditing(false)}
+                  className="px-2.5 py-1 rounded-lg text-[10px] font-semibold text-aegis-text-muted hover:text-aegis-text-secondary transition-colors"
+                >
+                  {t('chat.cancel', 'Cancel')}
+                </button>
+              </div>
             </div>
+          ) : block.isStreaming ? (
+            /* Plain text while streaming — no ReactMarkdown parsing overhead */
+            <pre className="markdown-body text-[14px] leading-relaxed text-aegis-text whitespace-pre-wrap break-words font-[inherit]">
+              {content}
+            </pre>
           ) : (
             <div className="markdown-body text-[14px] leading-relaxed text-aegis-text">
-              {(() => {
-                // Check for artifacts in assistant messages
-                const hasArtifacts = cleanContent.includes('<aegis_artifact');
-                if (hasArtifacts) {
-                  const { parts } = parseArtifacts(cleanContent);
-                  return parts.map((part, idx) => {
-                    if (part.kind === 'artifact' && part.artifact) {
-                      return <ArtifactCard key={`art-${idx}`} artifact={part.artifact} />;
-                    }
-                    // Render text parts as markdown
-                    return (
-                      <ReactMarkdown key={`txt-${idx}`} remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                        {part.text || ''}
-                      </ReactMarkdown>
-                    );
-                  });
-                }
-
-                // Normal markdown rendering (no artifacts)
-                try {
-                  return (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-                      {cleanContent}
-                    </ReactMarkdown>
-                  );
-                } catch {
-                  return <p className="whitespace-pre-wrap">{cleanContent}</p>;
-                }
-              })()}
+              {content && (
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                  {content}
+                </ReactMarkdown>
+              )}
             </div>
+          )}
+
+          {/* Artifacts (pre-parsed by ContentParser) */}
+          {block.artifacts.map((art, idx) => (
+            <ArtifactCard key={`art-${idx}`} artifact={art} />
+          ))}
+
+          {/* Collapsed Meta (thinking, workshop, system) */}
+          {block.meta && block.meta.length > 0 && !block.isStreaming && (
+            <CollapsedMeta items={block.meta} />
           )}
         </div>
 
-        {/* Footer — Time + Actions (more visible) */}
+        {/* Footer — Time + Actions */}
         <div className="flex items-center gap-2 mt-1 px-1 h-5">
           <span className="text-[10px] text-aegis-text-muted font-mono">{timeStr}</span>
 
-          {showActions && !isStreaming && (
+          {showActions && !block.isStreaming && (
             <div className="flex items-center gap-0.5 animate-fade-in">
               <button
                 onClick={handleCopy}
@@ -352,13 +373,33 @@ export const MessageBubble = memo(function MessageBubble({ message, onResend }: 
                   <Copy size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
                 )}
               </button>
-              {isUser && onResend && (
+              {block.role === 'user' && onResend && (
                 <button
-                  onClick={() => onResend(cleanContent)}
+                  onClick={() => onResend(block.markdown)}
                   className="p-1 rounded-md hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
                   title={t('chat.resend')}
                 >
                   <RotateCcw size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
+                </button>
+              )}
+              {/* Regenerate — assistant only */}
+              {block.role === 'assistant' && onRegenerate && (
+                <button
+                  onClick={onRegenerate}
+                  className="p-1 rounded-md hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+                  title={t('chat.regenerate', 'Regenerate')}
+                >
+                  <RefreshCw size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
+                </button>
+              )}
+              {/* Edit — user only */}
+              {block.role === 'user' && onResend && (
+                <button
+                  onClick={() => { setIsEditing(true); setEditText(block.markdown); }}
+                  className="p-1 rounded-md hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+                  title={t('chat.edit', 'Edit')}
+                >
+                  <Pencil size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
                 </button>
               )}
             </div>

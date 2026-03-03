@@ -448,6 +448,35 @@
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
 }
 
+/* ═══ Calendar shared utilities ═══ */
+.field-input {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.5rem;
+  background: var(--aegis-elevated);
+  border: 1px solid var(--aegis-border);
+  color: var(--aegis-text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field-input:focus { border-color: var(--aegis-primary); }
+.field-input:disabled { opacity: 0.5; cursor: not-allowed; }
+.field-input option { background: var(--aegis-elevated-solid); color: var(--aegis-text); }
+
+.btn-secondary {
+  padding: 0.5rem 1.25rem;
+  border-radius: 0.75rem;
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--aegis-elevated);
+  color: var(--aegis-text-muted);
+  border: 1px solid var(--aegis-border);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-secondary:hover { border-color: var(--aegis-border-hover); color: var(--aegis-text); }
+
 /* ═══ Mission Control (CronMonitor) ═══ */
 @keyframes mc-err-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 @keyframes mc-bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }

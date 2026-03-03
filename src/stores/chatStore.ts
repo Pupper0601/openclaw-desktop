@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import type { RenderBlock } from '@/types/RenderBlock';
+import { parseHistory, parseHistoryMessage } from '@/processing/ContentParser';
+import { useSettingsStore } from './settingsStore';
 
 // ═══════════════════════════════════════════════════════════
 // Chat Store — Message, Session, Tabs & Usage State
@@ -8,7 +11,7 @@ const MAIN_SESSION = 'agent:main:main';
 
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system' | 'tool';
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'compaction';
   content: string;
   timestamp: string;
   isStreaming?: boolean;
@@ -54,8 +57,12 @@ interface ChatState {
   setMessages: (msgs: ChatMessage[]) => void;
   clearMessages: () => void;
 
+  // Derived render data (recomputed whenever messages change)
+  renderBlocks: RenderBlock[];
+
   // Per-session message cache
   messagesPerSession: Record<string, ChatMessage[]>;
+  _blocksCache: Record<string, RenderBlock[]>;
   cacheMessagesForSession: (key: string, msgs: ChatMessage[]) => void;
   getCachedMessages: (key: string) => ChatMessage[] | undefined;
 
@@ -124,16 +131,63 @@ interface ChatState {
   setConnectionStatus: (status: { connected: boolean; connecting: boolean; error?: string }) => void;
 }
 
+// ─── Helper: recompute RenderBlock[] from current messages ───
+
+const recomputeBlocks = (messages: ChatMessage[]): RenderBlock[] => {
+  const raw = messages.map(msg => ({
+    id: msg.id,
+    role: msg.role,
+    content: msg.content,
+    timestamp: msg.timestamp,
+    toolName: msg.toolName,
+    toolInput: msg.toolInput,
+    toolOutput: msg.toolOutput,
+    toolStatus: msg.toolStatus,
+    toolDurationMs: msg.toolDurationMs,
+    thinkingContent: msg.thinkingContent,
+    mediaUrl: msg.mediaUrl,
+    mediaType: msg.mediaType,
+    attachments: msg.attachments,
+    isStreaming: msg.isStreaming,
+  }));
+
+  const toolIntentEnabled = useSettingsStore.getState().toolIntentEnabled;
+  return parseHistory(raw, toolIntentEnabled);
+};
+
 export const useChatStore = create<ChatState>((set, get) => ({
   // ── Messages (active session) ──
   messages: [],
+
+  // ── Derived render data ──
+  renderBlocks: [],
 
   addMessage: (msg) => {
     set((state) => {
       if (state.messages.some((m) => m.id === msg.id)) return state;
       const updated = [...state.messages, msg];
+
+      // Incremental: parse only the new message, append to existing blocks
+      const toolIntentEnabled = useSettingsStore.getState().toolIntentEnabled;
+      const newBlocks = parseHistoryMessage({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        toolName: msg.toolName,
+        toolInput: msg.toolInput,
+        toolOutput: msg.toolOutput,
+        toolStatus: msg.toolStatus,
+        toolDurationMs: msg.toolDurationMs,
+        thinkingContent: msg.thinkingContent,
+        mediaUrl: msg.mediaUrl,
+        mediaType: msg.mediaType,
+        attachments: msg.attachments,
+      }, toolIntentEnabled);
+
       return {
         messages: updated,
+        renderBlocks: [...state.renderBlocks, ...newBlocks],
         messagesPerSession: {
           ...state.messagesPerSession,
           [state.activeSessionKey]: updated,
@@ -167,8 +221,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
           },
         ];
       }
+      // Performance: directly update/append streaming block instead of full recompute
+      const blocks = [...state.renderBlocks];
+      const blockIdx = blocks.findIndex(b => b.id === id);
+      if (blockIdx >= 0) {
+        // Update existing streaming block in-place
+        blocks[blockIdx] = {
+          ...blocks[blockIdx],
+          ...(blocks[blockIdx].type === 'message' ? { markdown: content } : {}),
+          isStreaming: true,
+        } as any;
+      } else {
+        // Append new streaming block
+        blocks.push({
+          type: 'message' as const,
+          id,
+          role: 'assistant' as const,
+          markdown: content,
+          artifacts: [],
+          images: [],
+          isStreaming: true,
+          timestamp: new Date().toISOString(),
+        });
+      }
       return {
         messages: updated,
+        renderBlocks: blocks,
         messagesPerSession: {
           ...state.messagesPerSession,
           [state.activeSessionKey]: updated,
@@ -199,6 +277,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
         return {
           messages: updated,
+          renderBlocks: recomputeBlocks(updated),
           isTyping: false,
           // Clear thinking state after attaching to message
           thinkingText: '',
@@ -223,6 +302,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         const updated = [...state.messages, newMsg];
         return {
           messages: updated,
+          renderBlocks: recomputeBlocks(updated),
           isTyping: false,
           messagesPerSession: {
             ...state.messagesPerSession,
@@ -234,16 +314,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     });
   },
 
-  setMessages: (msgs) => set((state) => ({
-    messages: msgs,
-    messagesPerSession: {
-      ...state.messagesPerSession,
-      [state.activeSessionKey]: msgs,
-    },
-  })),
+  setMessages: (msgs) => set((state) => {
+    const blocks = recomputeBlocks(msgs);
+    return {
+      messages: msgs,
+      renderBlocks: blocks,
+      messagesPerSession: {
+        ...state.messagesPerSession,
+        [state.activeSessionKey]: msgs,
+      },
+      _blocksCache: {
+        ...state._blocksCache,
+        [state.activeSessionKey]: blocks,
+      },
+    };
+  }),
 
   clearMessages: () => set((state) => ({
     messages: [],
+    renderBlocks: [],
     messagesPerSession: {
       ...state.messagesPerSession,
       [state.activeSessionKey]: [],
@@ -252,9 +341,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   // ── Per-session cache ──
   messagesPerSession: {},
+  _blocksCache: {},
 
   cacheMessagesForSession: (key, msgs) => set((state) => ({
     messagesPerSession: { ...state.messagesPerSession, [key]: msgs },
+    _blocksCache: { ...state._blocksCache, [key]: recomputeBlocks(msgs) },
   })),
 
   getCachedMessages: (key) => get().messagesPerSession[key],
@@ -267,11 +358,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   setActiveSession: (key) => {
     const state = get();
-    // Cache current messages before switching
-    const cached = state.messagesPerSession[key];
+    const msgs = state.messagesPerSession[key] || [];
+    const blocks = state._blocksCache[key];
     set({
       activeSessionKey: key,
-      messages: cached || [],
+      messages: msgs,
+      renderBlocks: blocks || recomputeBlocks(msgs),
       isTyping: false,
     });
   },
@@ -281,14 +373,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   openTab: (key) => set((state) => {
     if (state.openTabs.includes(key)) {
-      // Already open — just activate
-      const cached = state.messagesPerSession[key];
-      return { activeSessionKey: key, messages: cached || [], isTyping: false };
+      const cached = state.messagesPerSession[key] || [];
+      const blocks = state._blocksCache[key];
+      return {
+        activeSessionKey: key,
+        messages: cached,
+        renderBlocks: blocks || recomputeBlocks(cached),
+        isTyping: false,
+      };
     }
+    const msgs = state.messagesPerSession[key] || [];
+    const blocks = state._blocksCache[key];
     return {
       openTabs: [...state.openTabs, key],
       activeSessionKey: key,
-      messages: state.messagesPerSession[key] || [],
+      messages: msgs,
+      renderBlocks: blocks || recomputeBlocks(msgs),
       isTyping: false,
     };
   }),
@@ -302,10 +402,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const newActive = state.activeSessionKey === key
       ? newTabs[newTabs.length - 1]
       : state.activeSessionKey;
+    const msgs = state.messagesPerSession[newActive] || [];
+    const blocks = state._blocksCache[newActive];
     return {
       openTabs: newTabs,
       activeSessionKey: newActive,
-      messages: state.messagesPerSession[newActive] || [],
+      messages: msgs,
+      renderBlocks: blocks || recomputeBlocks(msgs),
       isTyping: false,
     };
   }),

@@ -36,6 +36,7 @@ export function SettingsPageFull() {
     toolIntentEnabled, setToolIntentEnabled,
     gatewayUrl, setGatewayUrl,
     gatewayToken, setGatewayToken,
+    accentColor, setAccentColor,
   } = useSettingsStore();
   const { connected, connecting } = useChatStore();
   const sessions = useGatewayDataStore((s) => s.sessions);
@@ -230,6 +231,39 @@ export function SettingsPageFull() {
             <Sun size={15} />
             {t('settings.themeLight')}
           </button>
+        </div>
+      </GlassCard>
+
+      {/* Accent Color */}
+      <GlassCard delay={0.09}>
+        <h3 className="text-[14px] font-semibold text-aegis-text mb-4 flex items-center gap-2">
+          <span className="text-aegis-primary">🎨</span>
+          {t('settings.accentColor', 'Accent Color')}
+        </h3>
+        <div className="flex gap-3 flex-wrap">
+          {(['teal', 'blue', 'purple', 'rose', 'amber', 'emerald'] as const).map((color) => (
+            <button
+              key={color}
+              onClick={() => setAccentColor(color)}
+              className={clsx(
+                'w-8 h-8 rounded-full border-2 transition-all',
+                accentColor === color
+                  ? 'border-aegis-text scale-110'
+                  : 'border-transparent hover:border-aegis-text-dim hover:scale-105'
+              )}
+              style={{
+                backgroundColor: {
+                  teal: 'rgb(78, 201, 176)',
+                  blue: 'rgb(96, 165, 250)',
+                  purple: 'rgb(192, 132, 252)',
+                  rose: 'rgb(251, 113, 133)',
+                  amber: 'rgb(251, 191, 36)',
+                  emerald: 'rgb(52, 211, 153)',
+                }[color],
+              }}
+              title={color.charAt(0).toUpperCase() + color.slice(1)}
+            />
+          ))}
         </div>
       </GlassCard>
 

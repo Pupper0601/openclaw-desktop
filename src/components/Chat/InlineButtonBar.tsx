@@ -89,6 +89,7 @@ export function InlineButtonBar({ buttons, onCallback }: InlineButtonBarProps) {
   );
 }
 
+/** @deprecated Replaced by extractInlineButtonRows in ContentParser.ts — will be removed in v6.1 */
 /**
  * Extract inline buttons from a message tool call input.
  * Returns null if no buttons found.

@@ -1,8 +1,62 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { PrismLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check } from 'lucide-react';
+import { Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
+
+// ── Register only the languages we actually need (~50KB vs ~800KB) ──
+import javascript from 'react-syntax-highlighter/dist/esm/languages/prism/javascript';
+import typescript from 'react-syntax-highlighter/dist/esm/languages/prism/typescript';
+import python from 'react-syntax-highlighter/dist/esm/languages/prism/python';
+import bash from 'react-syntax-highlighter/dist/esm/languages/prism/bash';
+import json from 'react-syntax-highlighter/dist/esm/languages/prism/json';
+import css from 'react-syntax-highlighter/dist/esm/languages/prism/css';
+import html from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
+import yaml from 'react-syntax-highlighter/dist/esm/languages/prism/yaml';
+import sql from 'react-syntax-highlighter/dist/esm/languages/prism/sql';
+import markdown from 'react-syntax-highlighter/dist/esm/languages/prism/markdown';
+import diff from 'react-syntax-highlighter/dist/esm/languages/prism/diff';
+import c from 'react-syntax-highlighter/dist/esm/languages/prism/c';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/prism/cpp';
+import java from 'react-syntax-highlighter/dist/esm/languages/prism/java';
+import rust from 'react-syntax-highlighter/dist/esm/languages/prism/rust';
+import go from 'react-syntax-highlighter/dist/esm/languages/prism/go';
+import docker from 'react-syntax-highlighter/dist/esm/languages/prism/docker';
+import toml from 'react-syntax-highlighter/dist/esm/languages/prism/toml';
+import ini from 'react-syntax-highlighter/dist/esm/languages/prism/ini';
+import jsx from 'react-syntax-highlighter/dist/esm/languages/prism/jsx';
+import tsx from 'react-syntax-highlighter/dist/esm/languages/prism/tsx';
+
+SyntaxHighlighter.registerLanguage('javascript', javascript);
+SyntaxHighlighter.registerLanguage('js', javascript);
+SyntaxHighlighter.registerLanguage('typescript', typescript);
+SyntaxHighlighter.registerLanguage('ts', typescript);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('sh', bash);
+SyntaxHighlighter.registerLanguage('shell', bash);
+SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('css', css);
+SyntaxHighlighter.registerLanguage('html', html);
+SyntaxHighlighter.registerLanguage('xml', html);
+SyntaxHighlighter.registerLanguage('yaml', yaml);
+SyntaxHighlighter.registerLanguage('yml', yaml);
+SyntaxHighlighter.registerLanguage('sql', sql);
+SyntaxHighlighter.registerLanguage('markdown', markdown);
+SyntaxHighlighter.registerLanguage('md', markdown);
+SyntaxHighlighter.registerLanguage('diff', diff);
+SyntaxHighlighter.registerLanguage('c', c);
+SyntaxHighlighter.registerLanguage('lsl', c); // LSL closest match
+SyntaxHighlighter.registerLanguage('cpp', cpp);
+SyntaxHighlighter.registerLanguage('java', java);
+SyntaxHighlighter.registerLanguage('rust', rust);
+SyntaxHighlighter.registerLanguage('go', go);
+SyntaxHighlighter.registerLanguage('dockerfile', docker);
+SyntaxHighlighter.registerLanguage('docker', docker);
+SyntaxHighlighter.registerLanguage('toml', toml);
+SyntaxHighlighter.registerLanguage('ini', ini);
+SyntaxHighlighter.registerLanguage('jsx', jsx);
+SyntaxHighlighter.registerLanguage('tsx', tsx);
 
 // ═══════════════════════════════════════════════════════════
 // Code Block — Theme-aware (dark/light) matching AEGIS design
@@ -42,12 +96,26 @@ function buildTheme(base: Record<string, any>) {
   };
 }
 
+const COLLAPSE_THRESHOLD = 30; // Lines before auto-collapse
+const PREVIEW_LINES = 10;     // Lines shown when collapsed
+
 export function CodeBlock({ language, code }: CodeBlockProps) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
 
+  const totalLines = useMemo(() => code.split('\n').length, [code]);
+  const isLong = totalLines > COLLAPSE_THRESHOLD;
+  const [collapsed, setCollapsed] = useState(isLong);
+
+  const displayCode = useMemo(() => {
+    if (collapsed && isLong) {
+      return code.split('\n').slice(0, PREVIEW_LINES).join('\n');
+    }
+    return code;
+  }, [code, collapsed, isLong]);
+
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(code);
+    await navigator.clipboard.writeText(code); // Always copy FULL code
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -66,6 +134,9 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
         style={{ background: 'var(--aegis-code-header)' }}>
         <span className="text-[10px] font-mono font-medium text-aegis-text-muted uppercase tracking-widest">
           {displayLang}
+          {isLong && (
+            <span className="ml-2 opacity-60">{totalLines} lines</span>
+          )}
         </span>
         <button
           onClick={handleCopy}
@@ -90,7 +161,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
       <SyntaxHighlighter
         language={language || 'text'}
         style={theme}
-        showLineNumbers={code.split('\n').length > 3}
+        showLineNumbers={totalLines > 3}
         lineNumberStyle={{
           color: 'rgb(var(--aegis-overlay) / 0.12)',
           fontSize: '0.78em',
@@ -104,8 +175,31 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
           margin: 0,
         }}
       >
-        {code}
+        {displayCode}
       </SyntaxHighlighter>
+
+      {/* Collapse/Expand button */}
+      {isLong && (
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[11px] font-medium
+            text-aegis-primary hover:text-aegis-primary/80 transition-colors
+            border-t border-[rgb(var(--aegis-overlay)/0.06)]"
+          style={{ background: 'var(--aegis-code-header)' }}
+        >
+          {collapsed ? (
+            <>
+              <ChevronDown size={13} />
+              Show all ({totalLines} lines)
+            </>
+          ) : (
+            <>
+              <ChevronUp size={13} />
+              Collapse
+            </>
+          )}
+        </button>
+      )}
     </div>
   );
 }

@@ -26,7 +26,8 @@
     "config": "مدير الكونفق",
     "settings": "الإعدادات",
     "terminal": "الطرفية",
-    "notifications": "الإشعارات"
+    "notifications": "الإشعارات",
+    "calendar": "التقويم"
   },
   "skills": {
     "title": "المهارات",
@@ -733,5 +734,104 @@
     "configSaved": "تم حفظ الكونفق بنجاح",
     "pressCtrlS": "Ctrl+S للحفظ",
     "secrets": "الأسرار"
+  },
+  "calendar": {
+    "title": "التقويم",
+    "today": "اليوم",
+    "views": { "month": "شهر", "week": "أسبوع", "day": "يوم" },
+    "addEvent": "إضافة موعد",
+    "editEvent": "تعديل الموعد",
+    "newEvent": "موعد جديد",
+    "deleteEvent": "حذف الموعد",
+    "deleteConfirm": "هل أنت متأكد من حذف هذا الموعد؟",
+    "deleteConfirmHint": "سيتم حذف التذكير المرتبط أيضاً.",
+    "upcoming": "المواعيد القادمة",
+    "noUpcoming": "لا مواعيد قادمة",
+    "noEvents": "لا مواعيد",
+    "allDay": "طوال اليوم",
+    "loading": "جاري التحميل...",
+    "moreEvents": "+{{n}} أخرى",
+    "daySummary": "ملخص اليوم",
+    "eventCount": "{{count}} موعد",
+    "untitled": "بدون عنوان",
+    "error": "فشل تحميل المواعيد",
+    "field": {
+      "title": "العنوان",
+      "titlePlaceholder": "اسم الموعد...",
+      "date": "التاريخ",
+      "startTime": "وقت البداية",
+      "endTime": "وقت النهاية",
+      "location": "الموقع",
+      "locationPlaceholder": "اختياري...",
+      "notes": "ملاحظات",
+      "notesPlaceholder": "أضف ملاحظات...",
+      "category": "التصنيف",
+      "reminder": "التذكير",
+      "recurrence": "التكرار"
+    },
+    "category": {
+      "work": "عمل",
+      "personal": "شخصي",
+      "health": "صحة",
+      "social": "اجتماعي",
+      "education": "تعليم",
+      "other": "أخرى"
+    },
+    "categoryIcon": {
+      "work": "🏢",
+      "personal": "🏠",
+      "health": "🏥",
+      "social": "👥",
+      "education": "📚",
+      "other": "📌"
+    },
+    "reminder": {
+      "none": "بدون تذكير",
+      "5min": "قبل 5 دقائق",
+      "15min": "قبل 15 دقيقة",
+      "30min": "قبل 30 دقيقة",
+      "1hour": "قبل ساعة",
+      "2hours": "قبل ساعتين",
+      "1day": "قبل يوم",
+      "1week": "قبل أسبوع",
+      "scheduled": "مجدول ✓",
+      "pending": "في الانتظار",
+      "fired": "تم الإرسال ✓",
+      "failed": "فشل ✗"
+    },
+    "delivery": {
+      "label": "أرسل التذكير عبر",
+      "last": "آخر قناة نشطة",
+      "telegram": "تليجرام",
+      "discord": "ديسكورد",
+      "whatsapp": "واتساب",
+      "signal": "سيجنال",
+      "slack": "سلاك"
+    },
+    "recurrence": {
+      "none": "لا يتكرر",
+      "daily": "يومياً",
+      "weekly": "أسبوعياً",
+      "monthly": "شهرياً",
+      "yearly": "سنوياً"
+    },
+    "actions": {
+      "save": "حفظ",
+      "cancel": "إلغاء",
+      "delete": "حذف",
+      "edit": "تعديل",
+      "duplicate": "نسخ",
+      "markComplete": "إكمال",
+      "saving": "جاري الحفظ...",
+      "back": "رجوع"
+    },
+    "settings": {
+      "weekStart": "بداية الأسبوع",
+      "saturday": "السبت",
+      "sunday": "الأحد",
+      "monday": "الاثنين",
+      "defaultReminder": "التذكير الافتراضي",
+      "defaultView": "العرض الافتراضي"
+    }
   }
 }

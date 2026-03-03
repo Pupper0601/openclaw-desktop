@@ -5,7 +5,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileJson, CheckCircle2, AlertCircle, Pencil } from 'lucide-react';
+import { FileJson, CheckCircle2, AlertCircle, Pencil, History } from 'lucide-react';
 import clsx from 'clsx';
 import type { OpenClawConfig } from './types';
 import { ProvidersTab } from './ProvidersTab';
@@ -16,6 +16,68 @@ import { SecretsTab } from './SecretsTab';
 import { FloatingSaveButton, ChangesPill, DiffPreviewModal } from './components';
 
 type Tab = 'providers' | 'agents' | 'channels' | 'advanced' | 'secrets';
+
+// ─────────────────────────────────────────────────────────────
+// smartMerge — applies only the user's changes (diff between
+// original and current) on top of the latest disk version.
+// This preserves any CLI / external edits made after page load.
+//
+// Rules:
+//   current[key] !== original[key]  → user changed it   → use current
+//   current[key] === original[key]  → user didn't touch  → use disk  (preserves external changes)
+//   key in disk but NOT in original → external addition  → preserve
+//   key in original but NOT in current → user deleted    → omit
+//   Arrays are treated as atomic (no element-level merge)
+// ─────────────────────────────────────────────────────────────
+function smartMerge(disk: any, original: any, current: any): any {
+  // Handle non-object / null cases
+  if (disk === null || disk === undefined) return current;
+  if (
+    typeof disk !== 'object' ||
+    typeof original !== 'object' ||
+    typeof current !== 'object'
+  ) {
+    return JSON.stringify(original) !== JSON.stringify(current) ? current : disk;
+  }
+
+  // Arrays — treat as atomic (order matters, e.g. agents.list)
+  if (Array.isArray(current) || Array.isArray(disk)) {
+    return JSON.stringify(original) !== JSON.stringify(current) ? current : disk;
+  }
+
+  const result: Record<string, any> = {};
+
+  const allKeys = new Set([
+    ...Object.keys(disk),
+    ...Object.keys(current),
+  ]);
+
+  for (const key of allKeys) {
+    const inDisk     = key in disk;
+    const inOriginal = key in (original || {});
+    const inCurrent  = key in current;
+
+    if (inCurrent && !inOriginal && !inDisk) {
+      // User added a brand-new key → include it
+      result[key] = current[key];
+    } else if (!inCurrent && inOriginal) {
+      // User deleted this key → respect the deletion
+      continue;
+    } else if (inDisk && !inCurrent && !inOriginal) {
+      // External addition (not in original, not in current) → preserve it
+      result[key] = disk[key];
+    } else if (inCurrent && inDisk) {
+      // Both exist — recurse
+      result[key] = smartMerge(disk[key], (original || {})[key], current[key]);
+    } else if (inCurrent) {
+      result[key] = current[key];
+    } else if (inDisk) {
+      result[key] = disk[key];
+    }
+  }
+
+  return result;
+}
 
 export function ConfigManagerPage() {
   const { t } = useTranslation();
@@ -35,6 +97,7 @@ export function ConfigManagerPage() {
   // ── Modal / toast state ──
   const [diffOpen, setDiffOpen]       = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [showBackups, setShowBackups] = useState(false);
 
   // ── Editable config path ──
   const [editingPath, setEditingPath] = useState(false);
@@ -97,8 +160,32 @@ export function ConfigManagerPage() {
     if (!config || !configPath) return;
     setSaving(true);
     try {
-      await window.aegis.config.write(configPath, config);
-      setOriginalConfig(structuredClone(config));
+      // 1. Re-read the latest version from disk to capture any external edits
+      const { data: diskConfig } = await window.aegis.config.read(configPath);
+
+      // 2. Apply only the user's changes on top of the fresh disk version
+      const merged = smartMerge(diskConfig, originalConfig, config);
+
+      // Auto-backup: save last 5 versions before overwriting
+      try {
+        const backupKey = `config-backup-${Date.now()}`;
+        const backups: { key: string; data: any; ts: number }[] = JSON.parse(
+          localStorage.getItem('aegis-config-backups') || '[]'
+        );
+        backups.push({ key: backupKey, data: structuredClone(diskConfig), ts: Date.now() });
+        // Keep only last 5
+        while (backups.length > 5) backups.shift();
+        localStorage.setItem('aegis-config-backups', JSON.stringify(backups));
+      } catch (backupErr) {
+        console.warn('[Config] Backup failed:', backupErr);
+      }
+
+      // 3. Write the merged result
+      await window.aegis.config.write(configPath, merged);
+
+      // 4. Sync both states to the merged version
+      setConfig(structuredClone(merged));
+      setOriginalConfig(structuredClone(merged));
 
       // Restart gateway after successful save
       try {
@@ -291,6 +378,48 @@ export function ConfigManagerPage() {
           >
             📤 {t('config.importConfig')}
           </button>
+
+          {/* Restore from backup */}
+          <div className="relative group">
+            <button
+              onClick={() => setShowBackups(!showBackups)}
+              className="px-3 py-1.5 rounded-lg text-[11px] font-semibold
+                bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.08)]
+                text-aegis-text-muted hover:text-aegis-text-secondary transition-colors"
+              title="Restore from backup"
+            >
+              <History size={14} />
+            </button>
+            {showBackups && (
+              <div className="absolute top-full right-0 mt-1 w-64 p-2 rounded-xl border border-aegis-border
+                bg-aegis-elevated shadow-xl z-50">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-aegis-text-muted mb-2 px-2">
+                  Recent Backups
+                </div>
+                {(() => {
+                  const backups: { key: string; data: any; ts: number }[] = JSON.parse(
+                    localStorage.getItem('aegis-config-backups') || '[]'
+                  );
+                  if (backups.length === 0) return (
+                    <div className="text-[11px] text-aegis-text-dim px-2 py-3">No backups yet</div>
+                  );
+                  return backups.slice().reverse().map((b) => (
+                    <button key={b.key}
+                      onClick={() => {
+                        setConfig(structuredClone(b.data));
+                        setShowBackups(false);
+                      }}
+                      className="w-full text-left px-2 py-1.5 rounded-lg text-[11px]
+                        hover:bg-[rgb(var(--aegis-overlay)/0.04)] transition-colors">
+                      <div className="font-medium text-aegis-text-secondary">
+                        {new Date(b.ts).toLocaleString()}
+                      </div>
+                    </button>
+                  ));
+                })()}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

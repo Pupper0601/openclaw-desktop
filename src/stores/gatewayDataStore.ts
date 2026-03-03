@@ -263,16 +263,18 @@ let fastTimer:  ReturnType<typeof setInterval> | null = null;
 let midTimer:   ReturnType<typeof setInterval> | null = null;
 let slowTimer:  ReturnType<typeof setInterval> | null = null;
 
-// Reference to gateway (set by initPolling)
-let gw: any = null;
+// Reference to gateway connection (set by startPolling)
+// Uses request() directly to avoid circular imports with gateway facade
+let gw: { request: (method: string, params: any) => Promise<any> } | null = null;
 
 // ── Fetch functions ──────────────────────────────────────
 
 async function fetchSessions() {
+  if (!gw) return;
   const store = useGatewayDataStore.getState();
   store.setLoading('sessions', true);
   try {
-    const res = await gw.getSessions();
+    const res = await gw.request('sessions.list', {});
     const list = Array.isArray(res?.sessions) ? res.sessions : [];
     store.setSessions(list);
   } catch (e: any) {
@@ -282,10 +284,11 @@ async function fetchSessions() {
 }
 
 async function fetchAgents() {
+  if (!gw) return;
   const store = useGatewayDataStore.getState();
   store.setLoading('agents', true);
   try {
-    const res = await gw.getAgents();
+    const res = await gw.request('agents.list', {});
     const list = Array.isArray(res?.agents) ? res.agents
                : Array.isArray(res) ? res : [];
     store.setAgents(list);
@@ -296,10 +299,11 @@ async function fetchAgents() {
 }
 
 async function fetchCost() {
+  if (!gw) return;
   const store = useGatewayDataStore.getState();
   store.setLoading('cost', true);
   try {
-    const res = await gw.getCostSummary(30);
+    const res = await gw.request('usage.cost', { days: 30 });
     if (res) store.setCostSummary(res);
   } catch (e: any) {
     store.setError('cost', e?.message || String(e));
@@ -308,10 +312,11 @@ async function fetchCost() {
 }
 
 async function fetchUsage() {
+  if (!gw) return;
   const store = useGatewayDataStore.getState();
   store.setLoading('usage', true);
   try {
-    const res = await gw.getSessionsUsage({ limit: 100 });
+    const res = await gw.request('sessions.usage', { limit: 100 });
     if (res) store.setSessionsUsage(res);
   } catch (e: any) {
     store.setError('usage', e?.message || String(e));
@@ -320,10 +325,11 @@ async function fetchUsage() {
 }
 
 async function fetchCron() {
+  if (!gw) return;
   const store = useGatewayDataStore.getState();
   store.setLoading('cron', true);
   try {
-    const res = await gw.call('cron.list', { includeDisabled: true });
+    const res = await gw.request('cron.list', { includeDisabled: true });
     const list = Array.isArray(res?.jobs) ? res.jobs
                : Array.isArray(res) ? res : [];
     store.setCronJobs(list);
@@ -355,7 +361,7 @@ async function tickSlow() {
  * Start smart polling. Call once when gateway connects.
  * @param gateway  The GatewayService instance
  */
-export function startPolling(gateway: any) {
+export function startPolling(gateway: { request: (method: string, params: any) => Promise<any> }) {
   // Prevent double-start
   if (gw && useGatewayDataStore.getState().polling) return;
 
@@ -416,7 +422,7 @@ export async function refreshGroup(group: 'sessions' | 'agents' | 'cost' | 'usag
 export async function fetchFullCost(days = 365): Promise<CostSummary | null> {
   if (!gw) return null;
   try {
-    return await gw.getCostSummary(days);
+    return await gw.request('usage.cost', { days });
   } catch {
     return null;
   }
@@ -428,7 +434,7 @@ export async function fetchFullCost(days = 365): Promise<CostSummary | null> {
 export async function fetchFullUsage(limit = 2000): Promise<SessionsUsage | null> {
   if (!gw) return null;
   try {
-    return await gw.getSessionsUsage({ limit });
+    return await gw.request('sessions.usage', { limit });
   } catch {
     return null;
   }

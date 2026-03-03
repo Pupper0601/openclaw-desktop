@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Play, Pause, Volume2, VolumeX, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
+import { useSettingsStore } from '@/stores/settingsStore';
 
 // ═══════════════════════════════════════════════════════════
 // AudioPlayer — Custom audio player for TTS / voice messages
@@ -138,6 +139,10 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
 
     const onCanPlay = () => {
       setLoading(false);
+      // Auto-play if setting is enabled
+      if (useSettingsStore.getState().audioAutoPlay && !playing) {
+        audio.play().then(() => setPlaying(true)).catch(() => {});
+      }
     };
 
     audio.addEventListener('loadedmetadata', onLoadedMetadata);

@@ -99,7 +99,7 @@ function ModelPicker({ currentModel }: { currentModel: string | null }) {
   const effectiveModel = manualModelOverride ?? currentModel;
   // Match by exact model ID only — avoids "sonnet" matching inside "sonnet46"
   const activeModel = modelList.find((m) => effectiveModel === m.id);
-  const displayLabel = activeModel?.label ?? formatModelName(effectiveModel);
+  const displayLabel = activeModel?.alias || activeModel?.label || formatModelName(effectiveModel);
 
   return (
     <div ref={ref} className="relative no-drag">
@@ -125,7 +125,7 @@ function ModelPicker({ currentModel }: { currentModel: string | null }) {
       {/* Dropdown */}
       {open && (
         <div
-          className="absolute top-full left-0 mt-1 z-50 min-w-[160px] max-w-[220px] rounded-xl overflow-hidden bg-aegis-menu-bg border border-aegis-menu-border"
+          className="absolute top-full left-0 mt-1 z-50 min-w-[200px] max-w-[280px] rounded-xl overflow-hidden bg-aegis-menu-bg border border-aegis-menu-border"
           style={{
             boxShadow: 'var(--aegis-menu-shadow)',
           }}
@@ -158,7 +158,14 @@ function ModelPicker({ currentModel }: { currentModel: string | null }) {
                           : 'text-aegis-text-secondary hover:bg-[rgb(var(--aegis-overlay)/0.06)]'
                       )}
                     >
-                      <span className="font-mono truncate">{formatModelName(m.id)}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="font-mono truncate block">{m.alias || formatModelName(m.id)}</span>
+                        {m.alias && (
+                          <span className="text-[9px] text-aegis-text-dim font-mono truncate block">
+                            {formatModelName(m.id)}
+                          </span>
+                        )}
+                      </div>
                       {isActive && <Check size={11} className="text-aegis-primary shrink-0 ms-2" />}
                     </button>
                   );
@@ -265,6 +272,24 @@ function ThinkingPicker({ currentThinking }: { currentThinking: string | null })
 }
 
 // ═══════════════════════════════════════════════════════════
+// showUpdateToast — Simple toast helper for update events
+// ═══════════════════════════════════════════════════════════
+
+// Simple toast helper — uses the ToastContainer's global store if available,
+// otherwise falls back to a simple DOM notification
+function showUpdateToast(title: string, message: string, variant: 'info' | 'success' | 'warning' = 'info') {
+  // Try global toast API
+  if (typeof window !== 'undefined' && (window as any).__aegisToast) {
+    (window as any).__aegisToast({ title, message, variant });
+    return;
+  }
+  // Fallback: Electron notification
+  if (window.aegis?.notify) {
+    window.aegis.notify(title, message);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 // useAutoUpdate — Tracks electron-updater state
 // ═══════════════════════════════════════════════════════════
 
@@ -279,17 +304,40 @@ function useAutoUpdate() {
     const api = window.aegis?.update;
     if (!api) return;
 
-    api.onAvailable((info) => {
-      setUpdateVersion(info.version ?? null);
-      setStatus('available');
-    });
-    api.onUpToDate(() => setStatus('idle'));
-    api.onProgress((p) => {
-      setDownloadPercent(Math.round(p.percent ?? 0));
-      setStatus('downloading');
-    });
-    api.onDownloaded(() => setStatus('ready'));
-    api.onError(() => setStatus('error'));
+    const unsubs = [
+      api.onAvailable((info) => {
+        setUpdateVersion(info.version ?? null);
+        setStatus('available');
+        showUpdateToast(
+          '🔄 Update Available',
+          `Version ${info.version} is ready to download`,
+          'info'
+        );
+      }),
+      api.onUpToDate(() => setStatus('idle')),
+      api.onProgress((p) => {
+        setDownloadPercent(Math.round(p.percent ?? 0));
+        setStatus('downloading');
+      }),
+      api.onDownloaded(() => {
+        setStatus('ready');
+        showUpdateToast(
+          '✅ Update Ready',
+          'Restart to apply the update',
+          'success'
+        );
+      }),
+      api.onError(() => {
+        setStatus('error');
+        showUpdateToast(
+          '⚠️ Update Error',
+          'Failed to check for updates',
+          'warning'
+        );
+      }),
+    ];
+
+    return () => unsubs.forEach(fn => fn());
   }, []);
 
   const check = async () => {

@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { ArrowDown, Loader2, Zap } from 'lucide-react';
+import { ArrowDown, Download, Loader2, Search, X, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useShallow } from 'zustand/react/shallow';
+import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useChatStore, type ChatMessage } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { gateway } from '@/services/gateway';
@@ -10,8 +11,10 @@ import { ToolCallBubble } from './ToolCallBubble';
 import { ThinkingBubble } from './ThinkingBubble';
 import { MessageInput } from './MessageInput';
 import { TypingIndicator } from './TypingIndicator';
-import { InlineButtonBar, extractInlineButtons } from './InlineButtonBar';
+import { InlineButtonBar } from './InlineButtonBar';
 import { QuickReplyBar } from './QuickReplyBar';
+import type { RenderBlock } from '@/types/RenderBlock';
+import { exportChatMarkdown } from '@/utils/exportChat';
 import clsx from 'clsx';
 
 // ═══════════════════════════════════════════════════════════
@@ -57,93 +60,99 @@ function CompactDivider({ timestamp }: { timestamp?: string }) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Chat View — premium chat area
+// Chat View — Virtualized chat area
 // ═══════════════════════════════════════════════════════════
 
 export function ChatView() {
   const { t } = useTranslation();
-  const { messages, isTyping, connected, connecting, connectionError, isLoadingHistory, setMessages, setIsLoadingHistory, activeSessionKey, cacheMessagesForSession, getCachedMessages, addMessage, setHistoryLoader, quickReplies, setQuickReplies, thinkingText, thinkingRunId } = useChatStore();
+
+  // ── Store selectors (split to minimize re-renders) ──
+  const renderBlocks = useChatStore((s) => s.renderBlocks);
+  const messages = useChatStore((s) => s.messages);
+  const isTyping = useChatStore((s) => s.isTyping);
+  const thinkingText = useChatStore((s) => s.thinkingText);
+  const thinkingRunId = useChatStore((s) => s.thinkingRunId);
+  const quickReplies = useChatStore((s) => s.quickReplies);
+  const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
+
+  const { connected, connecting, connectionError } = useChatStore(
+    useShallow((s) => ({ connected: s.connected, connecting: s.connecting, connectionError: s.connectionError }))
+  );
+
+  const activeSessionKey = useChatStore((s) => s.activeSessionKey);
+
+  // Actions (stable references)
+  const setMessages = useChatStore((s) => s.setMessages);
+  const setIsLoadingHistory = useChatStore((s) => s.setIsLoadingHistory);
+  const cacheMessagesForSession = useChatStore((s) => s.cacheMessagesForSession);
+  const getCachedMessages = useChatStore((s) => s.getCachedMessages);
+  const addMessage = useChatStore((s) => s.addMessage);
+  const setHistoryLoader = useChatStore((s) => s.setHistoryLoader);
+  const setQuickReplies = useChatStore((s) => s.setQuickReplies);
+
   const toolIntentEnabled = useSettingsStore((s) => s.toolIntentEnabled);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+
+  // ── Search state ──
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<number[]>([]); // indices in renderBlocks
+  const [searchIndex, setSearchIndex] = useState(0); // current highlight index
+
+  // ── Virtuoso ref & scroll state ──
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(true);
-  // prevCompactionsRef removed — compaction detection moved to gateway.ts (direct agent event)
+  const [atBottom, setAtBottom] = useState(true);
 
-  // ── Clarify Card state (auto-detection disabled — triggered too many false positives) ──
+  // ── Keyboard shortcut: Ctrl+F to open search ──
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+      if (e.key === 'Escape' && searchOpen) {
+        setSearchOpen(false);
+        setSearchQuery('');
+        setSearchResults([]);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [searchOpen]);
 
-  const scrollToBottom = useCallback((smooth = true) => {
-    bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' });
+  // ── Search logic: compute matching block indices ──
+  useEffect(() => {
+    if (!searchQuery.trim()) { setSearchResults([]); return; }
+    const q = searchQuery.toLowerCase();
+    const results: number[] = [];
+    renderBlocks.forEach((block, i) => {
+      if (block.type === 'message' && block.markdown.toLowerCase().includes(q)) {
+        results.push(i);
+      } else if (block.type === 'tool' && (block.toolName.toLowerCase().includes(q) || (block.output || '').toLowerCase().includes(q))) {
+        results.push(i);
+      }
+    });
+    setSearchResults(results);
+    setSearchIndex(0);
+  }, [searchQuery, renderBlocks]);
+
+  // ── Navigate to current search result ──
+  useEffect(() => {
+    if (searchResults.length > 0 && virtuosoRef.current) {
+      virtuosoRef.current.scrollToIndex({ index: searchResults[searchIndex], behavior: 'smooth', align: 'center' });
+    }
+  }, [searchIndex, searchResults]);
+
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({
+      index: 'LAST',
+      behavior: 'smooth',
+      align: 'end',
+    });
   }, []);
 
-  useEffect(() => { if (autoScroll) scrollToBottom(); }, [messages, isTyping, autoScroll, scrollToBottom]);
-
-  // Real-time compaction detection moved to gateway.ts — direct agent event interception
-  // (no longer relies on polling tokenUsage.compactions counter)
-
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const isNearBottom = distanceFromBottom < 100;
-    setAutoScroll(isNearBottom);
-    setShowScrollDown(!isNearBottom && messages.length > 3);
-  }, [messages.length]);
-
-  const extractText = (val: any): string => {
-    if (typeof val === 'string') return val;
-    if (val == null) return '';
-    if (Array.isArray(val)) {
-      return val.map((b: any) => {
-        if (typeof b === 'string') return b;
-        if (b?.type === 'text' && typeof b.text === 'string') return b.text;
-        if (typeof b?.text === 'string') return b.text;
-        return '';
-      }).join('');
-    }
-    if (typeof val === 'object') {
-      if (typeof val.text === 'string') return val.text;
-      if (typeof val.content === 'string') return val.content;
-      if (Array.isArray(val.content)) return extractText(val.content);
-      return JSON.stringify(val);
-    }
-    return String(val);
-  };
-
-  const NOISE_PATTERNS = [
-    /^Read HEARTBEAT\.md/i, /^HEARTBEAT_OK/, /^NO_REPLY$/,
-    /^احفظ جميع المعلومات المهمة/, /^⚠️ Session nearing compaction/,
-    /^\[System\]/i, /^System:\s*\[/, /^PS [A-Z]:\\.*>/,
-    /^node scripts\/build/, /^npx electron/, /^Ctrl\+[A-Z]/,
-    // Desktop-injected metadata blocks
-    /^Conversation info \(untrusted metadata\)/i,
-    /^\[AEGIS_DESKTOP_CONTEXT\]/i,
-    /^\[AEGIS:RASHID\]/i,
-  ];
-
-  const isNoise = (text: string): boolean => {
-    const trimmed = text.trim();
-    if (!trimmed) return true;
-    return NOISE_PATTERNS.some((p) => p.test(trimmed));
-  };
-
-  // Strip injected metadata from user messages for clean display
-  const stripUserMeta = (text: string): string => {
-    let clean = text;
-    // Remove [AEGIS_DESKTOP_CONTEXT]...[/AEGIS_DESKTOP_CONTEXT] block
-    clean = clean.replace(/\[AEGIS_DESKTOP_CONTEXT\][\s\S]*?\[\/AEGIS_DESKTOP_CONTEXT\]\s*/i, '');
-    // Remove Conversation info JSON block
-    clean = clean.replace(/Conversation info \(untrusted metadata\):\s*```json\s*\{[\s\S]*?\}\s*```\s*/i, '');
-    // Remove System notification blocks (exec completed, compaction audit, etc.)
-    // Greedy match until the next recognized user block (timestamp, Conversation info, Desktop context) or end
-    clean = clean.replace(/System:\s*\[[\s\S]*?(?=\n\nConversation info|\n\n\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)|\n\n\[AEGIS_DESKTOP|\s*$)/g, '');
-    // Remove inline [Sat 2026-...] timestamp prefixes
-    clean = clean.replace(/^\[(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s+UTC\]\s*/i, '');
-    return clean.trim();
-  };
-
+  // ── History loading ──
   const loadHistory = useCallback(async () => {
-    // Check cache first
     const cached = getCachedMessages(activeSessionKey);
     if (cached && cached.length > 0) {
       setMessages(cached);
@@ -154,95 +163,38 @@ export function ChatView() {
     try {
       const result = await gateway.getHistory(activeSessionKey, 200);
       const rawMessages = Array.isArray(result?.messages) ? result.messages : [];
-      const filtered = rawMessages
-        .map((msg: any) => {
-          const role = typeof msg.role === 'string' ? msg.role : 'unknown';
-          const content = extractText(msg.content);
-          if (!content) return null;
-          if (role === 'system') {
-            if (/compact/i.test(content)) {
-              return { id: msg.id || `compaction-${Math.random().toString(36).slice(2)}`, role: 'compaction' as any, content: '', timestamp: msg.timestamp || msg.createdAt || new Date().toISOString() };
-            }
-            return null;
-          }
-          // ── Tool call messages → ToolCallBubble (only if enabled in settings) ──
-          if (!toolIntentEnabled && (
-            role === 'toolResult' || role === 'tool' ||
-            (role === 'assistant' && Array.isArray(msg.content) &&
-              msg.content.every((b: any) => b.type === 'toolCall' || b.type === 'tool_use'))
-          )) return null;
 
-          if (role === 'assistant' && Array.isArray(msg.content)) {
-            const toolBlocks = msg.content.filter((b: any) =>
-              b.type === 'toolCall' || b.type === 'tool_use'
-            );
-            if (toolBlocks.length > 0) {
-              // Map each tool block as a separate tool message
-              return toolBlocks.map((block: any, idx: number) => {
-                const toolName = block.name || block.toolName || 'unknown';
-                const toolInput = block.input ?? block.params ?? {};
-                return {
-                  id: `${msg.id || 'tool'}-call-${idx}`,
-                  role: 'tool' as const,
-                  content: '',
-                  toolName,
-                  toolInput,
-                  toolStatus: 'done' as const,
-                  timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
-                };
-              });
-            }
-          }
+      const messages = rawMessages.map((msg: any) => ({
+        id: msg.id || msg.messageId || `hist-${crypto.randomUUID()}`,
+        role: msg.role || 'unknown',
+        content: msg.content,
+        timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
+        mediaUrl: msg.mediaUrl || undefined,
+        mediaType: msg.mediaType || undefined,
+        attachments: msg.attachments,
+        toolName: msg.toolName || msg.name,
+        toolInput: msg.toolInput || msg.input,
+        toolCallId: msg.toolCallId || msg.tool_call_id,
+        thinkingContent: msg.thinkingContent,
+      }));
 
-          // Tool result messages — find matching call and attach output
-          if (role === 'toolResult' || role === 'tool') {
-            const toolName = msg.toolName || msg.name || 'unknown';
-            const output = typeof msg.content === 'string'
-              ? msg.content
-              : extractText(msg.content);
-            return {
-              id: msg.id || `tool-result-${Math.random().toString(36).slice(2)}`,
-              role: 'tool' as const,
-              content: '',
-              toolName,
-              toolOutput: output?.slice(0, 2000) || '',
-              toolStatus: 'done' as const,
-              timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
-            };
-          }
-
-          if (role !== 'user' && role !== 'assistant') return null;
-          if (Array.isArray(msg.content)) {
-            const hasOnlyTools = msg.content.every((b: any) =>
-              b.type === 'toolCall' || b.type === 'toolResult' || b.type === 'tool_use' || b.type === 'tool_result'
-            );
-            if (hasOnlyTools) return null;
-          }
-          if (msg.toolCallId || msg.tool_call_id) return null;
-          if (role === 'assistant' && isNoise(content)) return null;
-
-          // Clean user messages — strip injected Desktop context & metadata
-          const displayContent = role === 'user' ? stripUserMeta(content) : content;
-          if (!displayContent) return null;
-
-          return {
-            id: msg.id || msg.messageId || `hist-${Math.random().toString(36).slice(2)}`,
-            role: role as 'user' | 'assistant',
-            content: displayContent,
-            timestamp: msg.timestamp || msg.createdAt || new Date().toISOString(),
-            mediaUrl: msg.mediaUrl || undefined,
-          };
-        })
-        .flat()
-        .filter(Boolean) as any[];
-      setMessages(filtered);
-      cacheMessagesForSession(activeSessionKey, filtered);
+      // Progressive load: show last 20 instantly, then full set
+      if (messages.length > 20) {
+        setMessages(messages.slice(-20));
+        requestAnimationFrame(() => {
+          setMessages(messages);
+          cacheMessagesForSession(activeSessionKey, messages);
+        });
+      } else {
+        setMessages(messages);
+        cacheMessagesForSession(activeSessionKey, messages);
+      }
     } catch (err) {
       console.error('[ChatView] History load failed:', err);
     } finally {
       setIsLoadingHistory(false);
     }
-  }, [setMessages, setIsLoadingHistory, activeSessionKey, getCachedMessages, cacheMessagesForSession]);
+  }, [connected, activeSessionKey, setMessages, setIsLoadingHistory, getCachedMessages, cacheMessagesForSession]);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
@@ -273,7 +225,97 @@ export function ChatView() {
     return () => window.removeEventListener('aegis:refresh', handler);
   }, [handleRefresh]);
 
-  const handleResend = useCallback((content: string) => { gateway.sendMessage(content, undefined, activeSessionKey); }, [activeSessionKey]);
+  const handleResend = useCallback((content: string) => {
+    gateway.sendMessage(content, undefined, activeSessionKey);
+  }, [activeSessionKey]);
+
+  // Regenerate: re-send the last user message
+  const handleRegenerate = useCallback(() => {
+    const lastUserMsg = [...renderBlocks].reverse().find(
+      (b) => b.type === 'message' && b.role === 'user'
+    );
+    if (lastUserMsg && lastUserMsg.type === 'message') {
+      gateway.sendMessage(lastUserMsg.markdown, undefined, activeSessionKey);
+    }
+  }, [renderBlocks, activeSessionKey]);
+
+  const handleInlineButtonClick = useCallback(async (callbackData: string) => {
+    const text = callbackData;
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: new Date().toISOString(),
+    };
+    addMessage(userMsg);
+    const { setIsTyping } = useChatStore.getState();
+    setIsTyping(true);
+    try {
+      await gateway.sendMessage(text, undefined, activeSessionKey);
+    } catch (err) {
+      console.error('[InlineButtons] Send error:', err);
+    }
+  }, [addMessage, activeSessionKey]);
+
+  // ── Render a single block (used by Virtuoso) ──
+  const renderBlock = useCallback((index: number, block: RenderBlock) => {
+    switch (block.type) {
+      case 'compaction':
+        return <CompactDivider timestamp={block.timestamp} />;
+
+      case 'inline-buttons':
+        return (
+          <InlineButtonBar
+            buttons={block.rows.map(r => r.buttons.map(b => ({ text: b.text, callback_data: b.callback_data })))}
+            onCallback={handleInlineButtonClick}
+          />
+        );
+
+      case 'tool':
+        if (!toolIntentEnabled) return <div />;
+        return (
+          <ToolCallBubble
+            tool={{
+              toolName: block.toolName,
+              input: block.input,
+              output: block.output,
+              status: block.status,
+              durationMs: block.durationMs,
+            }}
+          />
+        );
+
+      case 'thinking':
+        return <ThinkingBubble content={block.content} />;
+
+      case 'message':
+        return (
+          <div>
+            {block.thinkingContent && (
+              <ThinkingBubble content={block.thinkingContent} />
+            )}
+            <MessageBubble
+              block={block}
+              onResend={block.role === 'user' ? handleResend : undefined}
+              onRegenerate={block.role === 'assistant' ? handleRegenerate : undefined}
+            />
+          </div>
+        );
+
+      default:
+        return <div />;
+    }
+  }, [toolIntentEnabled, handleResend, handleRegenerate, handleInlineButtonClick]);
+
+  // ── Footer: thinking stream + typing indicator ──
+  const Footer = useCallback(() => (
+    <div className="pb-1">
+      {thinkingText && thinkingRunId && (
+        <ThinkingBubble content={thinkingText} isStreaming />
+      )}
+      {isTyping && <TypingIndicator />}
+    </div>
+  ), [thinkingText, thinkingRunId, isTyping]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-aegis-bg">
@@ -304,106 +346,95 @@ export function ChatView() {
         </div>
       )}
 
-      {/* Messages Area */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto overflow-x-hidden py-3 scroll-smooth">
+      {/* Search Bar */}
+      {searchOpen && (
+        <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-aegis-border bg-aegis-elevated/50">
+          <Search size={14} className="text-aegis-text-muted shrink-0" />
+          <input
+            autoFocus
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') setSearchIndex((prev) => (prev + 1) % Math.max(searchResults.length, 1));
+              if (e.key === 'Enter' && e.shiftKey) setSearchIndex((prev) => (prev - 1 + searchResults.length) % Math.max(searchResults.length, 1));
+            }}
+            placeholder="Search messages..."
+            className="flex-1 bg-transparent text-[12px] text-aegis-text outline-none placeholder:text-aegis-text-dim"
+          />
+          {searchResults.length > 0 && (
+            <span className="text-[10px] font-mono text-aegis-text-muted shrink-0">
+              {searchIndex + 1}/{searchResults.length}
+            </span>
+          )}
+          {searchQuery && searchResults.length === 0 && (
+            <span className="text-[10px] text-aegis-text-dim shrink-0">No results</span>
+          )}
+          <button onClick={() => { setSearchOpen(false); setSearchQuery(''); setSearchResults([]); }}
+            className="p-1 rounded hover:bg-[rgb(var(--aegis-overlay)/0.06)]">
+            <X size={12} className="text-aegis-text-muted" />
+          </button>
+        </div>
+      )}
+
+      {/* Messages Area — Virtualized */}
+      <div className="flex-1 min-h-0 relative">
+        {/* Export button — floating, shown when there are messages */}
+        {renderBlocks.length > 0 && !searchOpen && (
+          <button
+            onClick={() => exportChatMarkdown(renderBlocks, activeSessionKey)}
+            className="absolute top-3 right-3 z-10 p-1.5 rounded-lg
+              bg-[rgb(var(--aegis-overlay)/0.06)] border border-[rgb(var(--aegis-overlay)/0.10)]
+              text-aegis-text-muted hover:text-aegis-text-secondary hover:bg-[rgb(var(--aegis-overlay)/0.12)]
+              transition-colors"
+            title="Export chat as Markdown"
+          >
+            <Download size={14} />
+          </button>
+        )}
+
         {isLoadingHistory ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-8">
             <Loader2 size={28} className="text-aegis-primary animate-spin mb-4" />
             <p className="text-aegis-text-muted text-[13px]">{t('chat.loadingHistory')}</p>
           </div>
-        ) : messages.length === 0 ? (
-          <div className="flex-1" />
+        ) : renderBlocks.length === 0 ? (
+          <div className="flex-1 h-full" />
         ) : (
-          <div className="space-y-0.5">
-            {messages.map((msg) => {
-              if ((msg.role as string) === 'compaction') {
-                return <CompactDivider key={msg.id} timestamp={msg.timestamp} />;
-              }
-              // Tool messages — check for inline buttons first, then normal tool display
-              if ((msg.role as string) === 'tool') {
-                // Always show inline buttons from `message` tool, regardless of toolIntentEnabled
-                const inlineButtons = extractInlineButtons(msg.toolName || '', msg.toolInput);
-                if (inlineButtons) {
-                  return (
-                    <InlineButtonBar
-                      key={msg.id}
-                      buttons={inlineButtons}
-                      onCallback={async (callbackData) => {
-                        const text = callbackData;
-                        const userMsg: ChatMessage = {
-                          id: `user-${Date.now()}`,
-                          role: 'user',
-                          content: text,
-                          timestamp: new Date().toISOString(),
-                        };
-                        addMessage(userMsg);
-                        const { setIsTyping } = useChatStore.getState();
-                        setIsTyping(true);
-                        try {
-                          await gateway.sendMessage(text, undefined, activeSessionKey);
-                        } catch (err) {
-                          console.error('[InlineButtons] Send error:', err);
-                        }
-                      }}
-                    />
-                  );
-                }
+          <Virtuoso
+            ref={virtuosoRef}
+            data={renderBlocks}
+            followOutput="smooth"
+            overscan={{ main: 600, reverse: 600 }}
+            increaseViewportBy={{ top: 400, bottom: 400 }}
+            defaultItemHeight={120}
+            initialTopMostItemIndex={renderBlocks.length - 1}
+            atBottomStateChange={setAtBottom}
+            atBottomThreshold={100}
+            itemContent={renderBlock}
+            components={{ Footer }}
+            className="h-full py-3 scrollbar-thin"
+            style={{ overflowX: 'clip' }}
+          />
+        )}
 
-                // Normal tool calls — only show when Tool Intent View is enabled
-                if (!toolIntentEnabled) return null;
-                return (
-                  <ToolCallBubble
-                    key={msg.id}
-                    tool={{
-                      toolName: msg.toolName || 'unknown',
-                      input: msg.toolInput,
-                      output: msg.toolOutput,
-                      status: msg.toolStatus || 'done',
-                      durationMs: msg.toolDurationMs,
-                    }}
-                  />
-                );
-              }
-              return (
-                <div key={msg.id}>
-                  {/* Finalized thinking — show collapsed bubble above the assistant message */}
-                  {msg.role === 'assistant' && msg.thinkingContent && (
-                    <ThinkingBubble content={msg.thinkingContent} />
-                  )}
-                  <MessageBubble message={msg} onResend={msg.role === 'user' ? handleResend : undefined} />
-                </div>
-              );
-            })}
+        {/* Scroll to bottom */}
+        {!atBottom && renderBlocks.length > 3 && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+            <button onClick={scrollToBottom}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full glass shadow-float text-[11px] text-aegis-text-muted hover:text-aegis-text transition-colors">
+              <ArrowDown size={13} />
+              <span>{t('chat.newMessages')}</span>
+            </button>
           </div>
         )}
-        {/* Live thinking stream — show above typing indicator when reasoning is active */}
-        {thinkingText && thinkingRunId && (
-          <ThinkingBubble content={thinkingText} isStreaming />
-        )}
-        {isTyping && <TypingIndicator />}
-        <div ref={bottomRef} className="h-1" />
       </div>
 
-      {/* Scroll to bottom */}
-      {showScrollDown && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 z-10">
-          <button onClick={() => { setAutoScroll(true); scrollToBottom(); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full glass shadow-float text-[11px] text-aegis-text-muted hover:text-aegis-text transition-colors">
-            <ArrowDown size={13} />
-            <span>{t('chat.newMessages')}</span>
-          </button>
-        </div>
-      )}
-
-      {/* Quick Reply buttons — from [[button:...]] markers in AI response */}
+      {/* Quick Reply buttons */}
       {quickReplies.length > 0 && !isTyping && (
         <QuickReplyBar
           buttons={quickReplies}
           onSend={async (text) => {
-            // Clear buttons immediately
             setQuickReplies([]);
-
-            // Add user message to chat
             const userMsg: ChatMessage = {
               id: `user-${Date.now()}`,
               role: 'user',
@@ -411,8 +442,6 @@ export function ChatView() {
               timestamp: new Date().toISOString(),
             };
             addMessage(userMsg);
-
-            // Send via gateway
             const { setIsTyping } = useChatStore.getState();
             setIsTyping(true);
             try {

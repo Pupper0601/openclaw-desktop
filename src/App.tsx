@@ -1,20 +1,29 @@
-import { useEffect, useCallback, useState, useRef } from 'react';
+import { useEffect, useCallback, useState, useRef, lazy } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { AppLayout } from '@/components/Layout/AppLayout';
-import { DashboardPage } from '@/pages/Dashboard';
-import { ChatPage } from '@/pages/ChatPage';
-import { WorkshopPage } from '@/pages/Workshop';
-import { FullAnalyticsPage } from '@/pages/FullAnalytics';
-import { CronMonitorPage } from '@/pages/CronMonitor';
-import { AgentHubPage } from '@/pages/AgentHub';
-import { MemoryExplorerPage } from '@/pages/MemoryExplorer';
-import { SkillsPage as SkillsPageFull } from '@/pages/SkillsPage';
-import { TerminalPage } from '@/pages/TerminalPage';
-import { SettingsPageFull } from '@/pages/SettingsPage';
-import { ConfigManagerPage } from '@/pages/ConfigManager';
 import { PairingScreen } from '@/components/PairingScreen';
 import { ToastContainer } from '@/components/Toast/ToastContainer';
+
+// Lazy-loaded pages
+const DashboardPage = lazy(() => import('@/pages/Dashboard').then(m => ({ default: m.DashboardPage })));
+const ChatPage = lazy(() => import('@/pages/ChatPage').then(m => ({ default: m.ChatPage })));
+const WorkshopPage = lazy(() => import('@/pages/Workshop').then(m => ({ default: m.WorkshopPage })));
+const FullAnalyticsPage = lazy(() => import('@/pages/FullAnalytics').then(m => ({ default: m.FullAnalyticsPage })));
+const CronMonitorPage = lazy(() => import('@/pages/CronMonitor').then(m => ({ default: m.CronMonitorPage })));
+const AgentHubPage = lazy(() => import('@/pages/AgentHub').then(m => ({ default: m.AgentHubPage })));
+const MemoryExplorerPage = lazy(() => import('@/pages/MemoryExplorer').then(m => ({ default: m.MemoryExplorerPage })));
+const SkillsPageFull = lazy(() => import('@/pages/SkillsPage').then(m => ({ default: m.SkillsPage })));
+const TerminalPage = lazy(() => import('@/pages/TerminalPage').then(m => ({ default: m.TerminalPage })));
+const SettingsPageFull = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPageFull })));
+const ConfigManagerPage = lazy(() => import('@/pages/ConfigManager').then(m => ({ default: m.ConfigManagerPage })));
+const SessionManagerPage = lazy(() => import('@/pages/SessionManager').then(m => ({ default: m.SessionManagerPage })));
+const LogsViewerPage = lazy(() => import('@/pages/LogsViewer').then(m => ({ default: m.LogsViewerPage })));
+const MultiAgentViewPage = lazy(() => import('@/pages/MultiAgentView').then(m => ({ default: m.MultiAgentViewPage })));
+const FileManagerPage = lazy(() => import('@/pages/FileManager').then(m => ({ default: m.FileManagerPage })));
+const CalendarPage = lazy(() => import('@/pages/Calendar'));
+const CodeInterpreterPage = lazy(() => import('@/pages/CodeInterpreter').then(m => ({ default: m.CodeInterpreterPage })));
+const McpToolsPage = lazy(() => import('@/pages/McpTools').then(m => ({ default: m.McpToolsPage })));
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { gateway } from '@/services/gateway';
@@ -307,21 +316,28 @@ export default function App() {
         {/* In-app toast notifications — always visible, above all routes */}
         <ToastContainer />
         <Routes>
-          <Route element={<AppLayout />}>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/chat" element={<ChatPage />} />
-            <Route path="/workshop" element={<WorkshopPage />} />
-            <Route path="/costs" element={<FullAnalyticsPage />} />
-            <Route path="/analytics" element={<FullAnalyticsPage />} />
-            <Route path="/cron" element={<CronMonitorPage />} />
-            <Route path="/agents" element={<AgentHubPage />} />
-            <Route path="/skills" element={<SkillsPageFull />} />
-            <Route path="/terminal" element={<TerminalPage />} />
-            <Route path="/memory" element={<MemoryExplorerPage />} />
-            <Route path="/config" element={<ConfigManagerPage />} />
-            <Route path="/settings" element={<SettingsPageFull />} />
-          </Route>
-        </Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/chat" element={<ChatPage />} />
+              <Route path="/workshop" element={<WorkshopPage />} />
+              <Route path="/costs" element={<FullAnalyticsPage />} />
+              <Route path="/analytics" element={<FullAnalyticsPage />} />
+              <Route path="/cron" element={<CronMonitorPage />} />
+              <Route path="/agents" element={<AgentHubPage />} />
+              <Route path="/skills" element={<SkillsPageFull />} />
+              <Route path="/terminal" element={<TerminalPage />} />
+              <Route path="/memory" element={<MemoryExplorerPage />} />
+              <Route path="/config" element={<ConfigManagerPage />} />
+              <Route path="/sessions" element={<SessionManagerPage />} />
+              <Route path="/logs" element={<LogsViewerPage />} />
+              <Route path="/agents/live" element={<MultiAgentViewPage />} />
+              <Route path="/files" element={<FileManagerPage />} />
+              <Route path="/calendar" element={<CalendarPage />} />
+              <Route path="/sandbox" element={<CodeInterpreterPage />} />
+              <Route path="/tools" element={<McpToolsPage />} />
+              <Route path="/settings" element={<SettingsPageFull />} />
+            </Route>
+          </Routes>
       </HashRouter>
     </>
   );

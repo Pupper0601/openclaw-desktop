@@ -301,30 +301,11 @@ export function AgentSettingsPanel({
     setSaving(true);
     try {
       if (selectedModel && !modelsMatch(selectedModel, origModel)) {
-        // 1. Persist to config file via config.set RPC
-        // First, find agent index in agents.list
-        try {
-          const listResult = await gateway.call('config.get', { path: 'agents.list' });
-          // config.get may return { value: [...] } or the array directly
-          const agentsList = Array.isArray(listResult) ? listResult : (listResult?.value ?? listResult?.result ?? []);
-
-          if (Array.isArray(agentsList)) {
-            const agentIndex = agentsList.findIndex((a: any) => a.id === agent.id);
-            if (agentIndex >= 0) {
-              await gateway.call('config.set', {
-                path: `agents.list[${agentIndex}].model`,
-                value: { primary: selectedModel }
-              });
-            }
-          }
-        } catch (err) {
-          console.warn('[AgentSettings] config.set failed, falling back to runtime-only:', err);
-        }
-
-        // 2. Also update runtime for immediate effect (no restart needed)
+        // agents.update persists to config file (writeConfigFile) AND updates runtime
+        // No need for config.get/config.set — agents.update handles everything
         await gateway.updateAgent(agent.id, { model: selectedModel });
 
-        // 3. Update local store so agent cards reflect the new model
+        // Update local store so agent cards reflect the new model immediately
         const store = useGatewayDataStore.getState();
         store.setAgents(
           store.agents.map(a =>

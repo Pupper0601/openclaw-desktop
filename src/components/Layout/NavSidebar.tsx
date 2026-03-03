@@ -9,7 +9,7 @@ import { motion } from 'framer-motion';
 import {
   LayoutDashboard, MessageCircle, Kanban, DollarSign,
   Clock, Bot, Settings, Settings2, Brain, Puzzle,
-  Terminal,
+  Terminal, Users, ScrollText, Radio, FolderOpen, Code2, Wrench, CalendarDays,
 } from 'lucide-react';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { getDirection } from '@/i18n';
@@ -32,8 +32,18 @@ const navItems: NavItem[] = [
   { to: '/skills', icon: Puzzle, labelKey: 'nav.skills' },
   { to: '/terminal', icon: Terminal, labelKey: 'nav.terminal' },
   { to: '/memory', icon: Brain, labelKey: 'nav.memory', badge: '🧪' },
+  { to: '/calendar', icon: CalendarDays, labelKey: 'nav.calendar' },
   { to: '/config', icon: Settings2, labelKey: 'nav.config' },
 ];
+
+
+// Prefetch heavy lazy chunks on hover (before click)
+const PREFETCH_MAP: Record<string, () => void> = {
+  '/chat': () => import('@/pages/ChatPage'),
+  '/costs': () => import('@/pages/FullAnalytics'),
+  '/cron': () => import('@/pages/CronMonitor'),
+  '/terminal': () => import('@/pages/TerminalPage'),
+};
 
 export function NavSidebar() {
   const { t } = useTranslation();
@@ -62,6 +72,7 @@ export function NavSidebar() {
             <NavLink
               key={item.to}
               to={item.to}
+              onMouseEnter={() => PREFETCH_MAP[item.to]?.()}
               aria-current={isActive ? 'page' : undefined}
               className={clsx(
                 'relative w-[44px] h-[44px] rounded-xl',

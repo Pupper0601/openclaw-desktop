@@ -22,6 +22,7 @@ interface SettingsState {
   memoryLocalPath: string;
   context1mEnabled: boolean;
   toolIntentEnabled: boolean;
+  audioAutoPlay: boolean;
   gatewayUrl: string;
   gatewayToken: string;
 
@@ -43,9 +44,21 @@ interface SettingsState {
   setMemoryLocalPath: (path: string) => void;
   setContext1mEnabled: (enabled: boolean) => void;
   setToolIntentEnabled: (enabled: boolean) => void;
+  setAudioAutoPlay: (enabled: boolean) => void;
   setGatewayUrl: (url: string) => void;
   setGatewayToken: (token: string) => void;
+  accentColor: string;
+  setAccentColor: (color: string) => void;
 }
+
+const ACCENT_SHADES: Record<string, { 400: string; 500: string; 600: string; raw400: string }> = {
+  teal:    { 400: 'var(--color-teal-400)',    500: 'var(--color-teal-500)',    600: 'var(--color-teal-600)',    raw400: 'var(--color-teal-400)' },
+  blue:    { 400: 'var(--color-blue-400)',    500: 'var(--color-blue-500)',    600: 'var(--color-blue-600)',    raw400: 'var(--color-blue-400)' },
+  purple:  { 400: 'var(--color-purple-400)',  500: 'var(--color-purple-500)',  600: 'var(--color-purple-600)',  raw400: 'var(--color-purple-400)' },
+  rose:    { 400: 'var(--color-rose-400)',    500: 'var(--color-rose-500)',    600: 'var(--color-rose-600)',    raw400: 'var(--color-rose-400)' },
+  amber:   { 400: 'var(--color-amber-400)',   500: 'var(--color-amber-500)',   600: 'var(--color-amber-600)',   raw400: 'var(--color-amber-400)' },
+  emerald: { 400: 'var(--color-emerald-400)', 500: 'var(--color-emerald-500)', 600: 'var(--color-emerald-600)', raw400: 'var(--color-emerald-400)' },
+};
 
 // Auto-detect language on first run: check saved → system language → fallback to English
 const detectLang = (): 'ar' | 'en' => {
@@ -75,8 +88,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   memoryLocalPath: localStorage.getItem('aegis-memory-local-path') || '',
   context1mEnabled: localStorage.getItem('aegis-context1m') === 'true',
   toolIntentEnabled: localStorage.getItem('aegis-tool-intent') === 'true',
+  audioAutoPlay: localStorage.getItem('aegis-audio-autoplay') === 'true',
   gatewayUrl: localStorage.getItem('aegis-gateway-url') || '',
   gatewayToken: localStorage.getItem('aegis-gateway-token') || '',
+  accentColor: localStorage.getItem('aegis-accent-color') || 'teal',
 
   setTheme: (theme) => {
     localStorage.setItem('aegis-theme', theme);
@@ -103,6 +118,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setMemoryLocalPath: (path) => { localStorage.setItem('aegis-memory-local-path', path); set({ memoryLocalPath: path }); },
   setContext1mEnabled: (enabled) => { localStorage.setItem('aegis-context1m', String(enabled)); set({ context1mEnabled: enabled }); },
   setToolIntentEnabled: (enabled) => { localStorage.setItem('aegis-tool-intent', String(enabled)); set({ toolIntentEnabled: enabled }); },
+  setAudioAutoPlay: (enabled) => { localStorage.setItem('aegis-audio-autoplay', String(enabled)); set({ audioAutoPlay: enabled }); },
   setGatewayUrl: (url) => {
     localStorage.setItem('aegis-gateway-url', url);
     set({ gatewayUrl: url });
@@ -113,4 +129,24 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     set({ gatewayToken: token });
     window.aegis?.settings?.save?.('gatewayToken', token).catch?.(() => {});
   },
+  setAccentColor: (color) => {
+    localStorage.setItem('aegis-accent-color', color);
+    set({ accentColor: color });
+    // Apply CSS override
+    const root = document.documentElement;
+    const shades = ACCENT_SHADES[color as keyof typeof ACCENT_SHADES];
+    if (shades) {
+      root.style.setProperty('--aegis-primary', shades[400]);
+      root.style.setProperty('--aegis-primary-hover', shades[500]);
+      root.style.setProperty('--aegis-primary-deep', shades[600]);
+      root.style.setProperty('--aegis-primary-glow', `rgb(${shades.raw400} / 0.16)`);
+      root.style.setProperty('--aegis-primary-surface', `rgb(${shades.raw400} / 0.08)`);
+    }
+  },
 }));
+
+// Apply saved accent on load
+const savedAccent = localStorage.getItem('aegis-accent-color');
+if (savedAccent && savedAccent !== 'teal') {
+  useSettingsStore.getState().setAccentColor(savedAccent);
+}

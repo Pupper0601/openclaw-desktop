@@ -10,11 +10,9 @@ import clsx from 'clsx';
 import { themeHex } from '@/utils/theme-colors';
 
 // ── Format helpers (shared with index.tsx) ──────────────────
+import { formatTokens } from '@/utils/format';
 
-export const fmtTokens = (n: number) =>
-  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
-  : n >= 1_000   ? `${Math.round(n / 1_000)}k`
-  : String(n);
+export const fmtTokens = formatTokens; // re-export alias for backward compat
 
 export const fmtCost = (n: number) => `$${n.toFixed(2)}`;
 

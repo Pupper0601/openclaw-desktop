@@ -8,6 +8,7 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
+import { timeAgo as centralTimeAgo } from '@/utils/format';
 import {
   Plus, X, Search, Filter, Activity, Trash2,
 } from 'lucide-react';
@@ -55,18 +56,8 @@ function agentEmoji(name?: string): string {
   return AGENT_EMOJIS[name.toLowerCase()] ?? '🤖';
 }
 
-// ── Time formatting ──────────────────────────────────────
-
-function timeAgo(iso: string): string {
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 1) return 'now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
-}
+// ── Time formatting (uses central utils/format.ts) ──────
+const timeAgo = (iso: string) => centralTimeAgo(iso);
 
 // ═══════════════════════════════════════════════════════════
 // Stats Row

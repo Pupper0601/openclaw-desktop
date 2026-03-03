@@ -67,6 +67,12 @@ interface AegisAPI {
     save: (filename: string, base64: string) => Promise<string | null>;
     read: (filePath: string) => Promise<string | null>;
   };
+  calendar?: {
+    getEvents: () => Promise<any[]>;
+    addEvent: (event: any) => Promise<{ success: boolean; id?: string }>;
+    updateEvent: (id: string, updates: any) => Promise<{ success: boolean }>;
+    deleteEvent: (id: string) => Promise<{ success: boolean }>;
+  };
   memory: {
     browse: () => Promise<string | null>;
     readLocal: (dirPath: string) => Promise<{ success: boolean; files: any[]; error?: string }>;

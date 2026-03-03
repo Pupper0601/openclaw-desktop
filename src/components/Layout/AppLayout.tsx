@@ -3,7 +3,9 @@
 // + Ambient background glow (from conceptual design)
 // ═══════════════════════════════════════════════════════════
 
+import { Suspense } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import { TitleBar } from '@/components/TitleBar';
 import { NavSidebar } from '@/components/Layout/NavSidebar';
 import { CommandPalette } from '@/components/CommandPalette';
@@ -15,7 +17,7 @@ import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
 import { getDirection } from '@/i18n';
 
 /** Pages that work without Gateway connection */
-const OFFLINE_PAGES = ['/settings', '/terminal'];
+const OFFLINE_PAGES = ['/settings', '/terminal', '/config'];
 
 export function AppLayout() {
   const { language } = useSettingsStore();
@@ -42,7 +44,17 @@ export function AppLayout() {
         <main className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             <ErrorBoundary>
-              {showOffline ? <OfflineOverlay /> : <Outlet />}
+              {showOffline ? (
+                <OfflineOverlay />
+              ) : (
+                <Suspense fallback={
+                  <div className="flex-1 flex items-center justify-center h-full">
+                    <Loader2 className="w-6 h-6 animate-spin text-aegis-primary/50" />
+                  </div>
+                }>
+                  <Outlet />
+                </Suspense>
+              )}
             </ErrorBoundary>
           </div>
         </main>

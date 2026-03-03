@@ -522,7 +522,10 @@ export function CronMonitorPage() {
       try {
         const result = await gateway.call('cron.runs', { jobId: selectedJobId });
         if (fetchId !== selectedFetchId.current) return; // stale — discard
-        const entries = (result?.entries || []).slice(-14).reverse();
+        const job = jobsRef.current.find(j => j.id === selectedJobId);
+        const entries = (result?.entries || []).slice(-14).reverse().map((e: any) => ({
+          ...e, jobId: selectedJobId, jobName: job?.name || selectedJobId,
+        }));
         setSelectedJobRuns(entries);
       } catch {
         if (fetchId !== selectedFetchId.current) return; // stale
@@ -571,6 +574,8 @@ export function CronMonitorPage() {
   useEffect(() => { if (jobs.length > 0 && !selectedJobId) setSelectedJobId(jobs[0].id); }, [jobs.length]); // eslint-disable-line
 
   // ═══ RENDER ═══
+  // Activity log shows selected job's runs when a job is selected, otherwise all recent runs
+  const activityRuns = selectedJobId ? selectedJobRuns : recentRuns;
   return (
     <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: 'calc(100vh - 80px)' }}>
 
@@ -911,7 +916,16 @@ export function CronMonitorPage() {
           <div className="flex-1 flex flex-col overflow-hidden">
             <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-[rgb(var(--aegis-overlay)/0.06)]
               bg-aegis-bg-frosted backdrop-blur-sm">
-              <h4 className="text-[11px] font-bold uppercase tracking-[1.5px] text-aegis-text-muted">{t('cronDetail.activityLog')}</h4>
+              <h4 className="text-[11px] font-bold uppercase tracking-[1.5px] text-aegis-text-muted">
+                {selectedJob
+                  ? `${selectedJob.name || selectedJob.id} — ${t('cronDetail.activityLog')}`
+                  : t('cronDetail.activityLog')}
+              </h4>
+              {activityRuns.length > 0 && (
+                <span className="text-[9px] font-mono text-aegis-text-dim bg-[rgb(var(--aegis-overlay)/0.04)] px-1.5 py-0.5 rounded">
+                  {activityRuns.length}
+                </span>
+              )}
               <div className="flex items-center gap-1.5 text-[8px] font-extrabold text-aegis-primary uppercase tracking-[1px]">
                 <div className="w-[5px] h-[5px] rounded-full bg-aegis-primary"
                   style={{ animation: 'mc-dot-ping 2s ease-in-out infinite' }} />
@@ -923,13 +937,13 @@ export function CronMonitorPage() {
                 <div className="flex items-center gap-2 py-4 px-3 text-[10px] text-aegis-text-dim">
                   <Loader2 size={12} className="animate-spin" /> Loading...
                 </div>
-              ) : recentRuns.length === 0 ? (
+              ) : activityRuns.length === 0 ? (
                 <div className="text-[10px] text-aegis-text-dim py-4 px-3">No runs yet</div>
               ) : (
                 <>
                   {/* Fix #4: no motion animation on log items (they re-rendered every poll) */}
                   {/* Fix #12: more unique key with index */}
-                  {(showAllLogs ? recentRuns : recentRuns.slice(0, 5)).map((run, i) => {
+                  {(showAllLogs ? activityRuns : activityRuns.slice(0, 5)).map((run, i) => {
                     const color = colorMap[run.jobId || ''] || dataColor(9);
                     const isOk = run.status === 'ok';
                     return (
@@ -960,11 +974,11 @@ export function CronMonitorPage() {
                     );
                   })}
                   {/* Show More / Show Less toggle */}
-                  {recentRuns.length > 5 && (
+                  {activityRuns.length > 5 && (
                     <button onClick={() => setShowAllLogs(!showAllLogs)}
                       className="w-full py-2 mt-1 rounded-lg text-[10px] font-semibold
                         text-aegis-accent/50 hover:text-aegis-accent hover:bg-aegis-accent/[0.04] transition-colors">
-                      {showAllLogs ? t('cronDetail.showLess') : t('cronDetail.showMore', { n: recentRuns.length - 5 })}
+                      {showAllLogs ? t('cronDetail.showLess') : t('cronDetail.showMore', { n: activityRuns.length - 5 })}
                     </button>
                   )}
                 </>
