@@ -21,3 +21,6 @@ final_summary.txt
 patch-ar-voice.js
 patch-voice-i18n.js
 RELEASE_NOTES.md
+-e 
+Office Tileset/
+calendar-rebuild-plan.md
