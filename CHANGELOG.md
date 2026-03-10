@@ -6,7 +6,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
-## [5.6.0] — 2026-03-10
+## [5.5.1] — 2026-03-10
 
 ### Added
 - **Voice Chat** — real-time voice conversations powered by Gemini Live API as a speech relay. Gemini handles STT/TTS via `ask_aegis` function calling, Gateway handles the intelligence. AudioWorklet mic capture (PCM16 @ 16kHz) with gapless playback (PCM @ 24kHz). Silero VAD filters background noise. Aura visualizer with four animated states (idle, listening, thinking, speaking). Dedicated settings panel for API key, response model, voice selection. Isolated voice sessions separate from text chat.
