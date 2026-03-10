@@ -588,7 +588,21 @@
         case 'svg':
           var svgDiv = document.createElement('div');
           svgDiv.className = 'svg-container';
-          svgDiv.innerHTML = content;
+          // Sanitize SVG: parse and strip scripts to prevent XSS
+          var svgParser = new DOMParser();
+          var svgDoc = svgParser.parseFromString(content, 'image/svg+xml');
+          var parseError = svgDoc.querySelector('parsererror');
+          if (parseError) {
+            svgDiv.textContent = 'Invalid SVG content';
+          } else {
+            svgDoc.querySelectorAll('script, foreignObject').forEach(function(el) { el.remove(); });
+            svgDoc.querySelectorAll('*').forEach(function(el) {
+              Array.from(el.attributes).forEach(function(attr) {
+                if (attr.name.startsWith('on')) el.removeAttribute(attr.name);
+              });
+            });
+            svgDiv.appendChild(document.importNode(svgDoc.documentElement, true));
+          }
           container.appendChild(svgDiv);
           break;
 
