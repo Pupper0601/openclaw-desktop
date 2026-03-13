@@ -14,7 +14,7 @@ import { ProgressRing } from '@/components/shared/ProgressRing';
 import { StatusDot } from '@/components/shared/StatusDot';
 import { useChatStore } from '@/stores/chatStore';
 import { useGatewayDataStore, refreshAll, refreshGroup } from '@/stores/gatewayDataStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import clsx from 'clsx';
 import { themeHex, themeAlpha, dataColor } from '@/utils/theme-colors';
 

@@ -276,7 +276,8 @@
     "toggleTheme": "تغيير المظهر",
     "toggleLanguage": "Switch to English",
     "toggleNotifications": "تبديل التنبيهات",
-    "searchPlaceholder": "ابحث في الأوامر..."
+    "searchPlaceholder": "ابحث في الأوامر...",
+    "searchBarHint": "بحث..."
   },
   "terminal": {
     "title": "الطرفية",

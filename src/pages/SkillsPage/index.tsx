@@ -8,7 +8,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, Loader2, RefreshCw, Package, Globe } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { useChatStore } from '@/stores/chatStore';
 import clsx from 'clsx';
 import {

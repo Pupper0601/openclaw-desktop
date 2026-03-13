@@ -18,7 +18,7 @@ import {
   Cpu, Check, ChevronDown, Activity, AlertCircle,
   Search, FolderOpen, Clock, Zap,
 } from 'lucide-react';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
 import { themeHex, themeAlpha } from '@/utils/theme-colors';
 import clsx from 'clsx';

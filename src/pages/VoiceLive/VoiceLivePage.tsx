@@ -35,7 +35,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useVoiceLiveStore } from '../../stores/voiceLiveStore';
-import { gateway } from '../../services/gateway';
+import { gateway } from '../../services/gateway/index';
 import { GeminiLiveService } from '../../services/voiceLive/GeminiLiveService';
 import { AudioCapture } from '../../services/voiceLive/AudioCapture';
 import { AudioPlayback } from '../../services/voiceLive/AudioPlayback';

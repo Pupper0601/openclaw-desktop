@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Play, RotateCcw, Loader2, Check, X, Plus, Search, Trash2 } from 'lucide-react';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useGatewayDataStore, refreshGroup } from '@/stores/gatewayDataStore';

@@ -1404,5 +1404,5 @@ app.on('before-quit', () => {
   ptyProcesses.clear();
 });
 
-console.log('Æ AEGIS Desktop v5.5.1 started');
+console.log('Æ AEGIS Desktop v5.6.0 started');
 

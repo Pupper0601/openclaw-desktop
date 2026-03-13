@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Copy, Check, User, RotateCcw, Eye, Code2, RefreshCw, Pencil, ChevronDown, ChevronRight } from 'lucide-react';
+import { Copy, Check, User, RotateCcw, Eye, Code2, RefreshCw, Pencil, ChevronDown, ChevronRight, Pin, PinOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getDirection } from '@/i18n';
 import { CodeBlock } from './CodeBlock';
@@ -9,7 +9,54 @@ import { ChatImage } from './ChatImage';
 import { ChatVideo } from './ChatVideo';
 import { AudioPlayer } from './AudioPlayer';
 import type { MessageBlock, Artifact, MetaItem } from '@/types/RenderBlock';
+import { useChatStore } from '@/stores/chatStore';
 import clsx from 'clsx';
+
+// ── Pin Button ──
+function PinButton({ messageId, text }: { messageId: string; text: string }) {
+  const isPinned = useChatStore((s) => s.pinnedMessages.some(p => p.id === messageId));
+  const pinMessage = useChatStore((s) => s.pinMessage);
+  const unpinMessage = useChatStore((s) => s.unpinMessage);
+
+  if (!messageId) return null;
+
+  return (
+    <button
+      onClick={() => isPinned ? unpinMessage(messageId) : pinMessage(messageId, text)}
+      className="p-1 rounded-md hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+      title={isPinned ? 'Unpin' : 'Pin'}
+    >
+      {isPinned ? (
+        <PinOff size={11} className="text-amber-400" />
+      ) : (
+        <Pin size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
+      )}
+    </button>
+  );
+}
+
+// ── Agent Avatar — shows fetched avatar or fallback gradient ──
+function AgentAvatar() {
+  const avatarUrl = useChatStore((s) => s.agentAvatarUrl);
+  const agentName = useChatStore((s) => s.agentName);
+  const initial = (agentName || 'A').charAt(0).toUpperCase();
+
+  if (avatarUrl) {
+    return (
+      <img
+        src={avatarUrl}
+        alt={agentName || 'Agent'}
+        className="w-8 h-8 rounded-xl shrink-0 mt-0.5 shadow-glow-sm object-cover"
+      />
+    );
+  }
+
+  return (
+    <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-aegis-primary to-aegis-accent flex items-center justify-center shrink-0 mt-0.5 shadow-glow-sm">
+      <span className="text-[10px] font-bold text-aegis-text">{initial}</span>
+    </div>
+  );
+}
 
 // ── Artifact Card Component ──
 function ArtifactCard({ artifact }: { artifact: Artifact }) {
@@ -253,9 +300,7 @@ export const MessageBubble = memo(function MessageBubble({ block, onResend, onRe
           <User size={14} className="text-aegis-primary" />
         </div>
       ) : (
-        <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-aegis-primary to-aegis-accent flex items-center justify-center shrink-0 mt-0.5 shadow-glow-sm">
-          <span className="text-[10px] font-bold text-aegis-text">A</span>
-        </div>
+        <AgentAvatar />
       )}
 
       {/* Message Content */}
@@ -373,6 +418,8 @@ export const MessageBubble = memo(function MessageBubble({ block, onResend, onRe
                   <Copy size={11} className="text-aegis-text-muted hover:text-aegis-text-secondary" />
                 )}
               </button>
+              {/* Pin/Unpin */}
+              <PinButton messageId={block.id || ''} text={block.markdown} />
               {block.role === 'user' && onResend && (
                 <button
                   onClick={() => onResend(block.markdown)}

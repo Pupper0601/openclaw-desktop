@@ -29,7 +29,7 @@ const PluginsPage = lazy(() => import('@/pages/PluginsPage').then(m => ({ defaul
 const VoiceLivePage = lazy(() => import('@/pages/VoiceLive').then(m => ({ default: m.VoiceLivePage })));
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { notifications } from '@/services/notifications';
 import { changeLanguage } from '@/i18n';
 
@@ -215,6 +215,15 @@ export default function App() {
           loadSessions();
           loadTokenUsage();
           loadAvailableModels();
+          // Fetch agent identity (avatar + name)
+          gateway.getAgentIdentity().then((identity: any) => {
+            if (identity) {
+              useChatStore.getState().setAgentIdentity(
+                identity.name || null,
+                identity.avatarUrl || identity.avatar || null
+              );
+            }
+          }).catch(() => {});
         }
       },
       onScopeError: (error) => {

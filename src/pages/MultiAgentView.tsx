@@ -9,7 +9,7 @@ import { Bot, RefreshCw, Loader2, Zap, Clock, ChevronRight, MessageSquare } from
 import { PageTransition } from '@/components/shared/PageTransition';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
 import { formatTokens } from '@/utils/format';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import clsx from 'clsx';
 
 // ═══════════════════════════════════════════════════════════

@@ -30,10 +30,24 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      // Escape → close palette / modals
+      // Ctrl+Shift+F → Focus Mode
+      if (ctrl && shift && e.key === 'F') {
+        e.preventDefault();
+        useSettingsStore.getState().toggleFocusMode();
+        return;
+      }
+
+      // Escape → close palette / modals / exit focus mode
       if (e.key === 'Escape') {
         if (commandPaletteOpen) {
           setCommandPaletteOpen(false);
+          e.preventDefault();
+          return;
+        }
+        // Exit focus mode on Escape
+        const { focusMode } = useSettingsStore.getState();
+        if (focusMode) {
+          useSettingsStore.getState().toggleFocusMode();
           e.preventDefault();
           return;
         }

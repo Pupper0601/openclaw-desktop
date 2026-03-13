@@ -156,6 +156,21 @@ export class ChatHandler {
   private currentStreamContent: string = '';
   private lastCompactionTs: number = 0;
 
+  // ── Silent run detection ──
+  // Some providers (e.g., Gemini) don't emit streaming events at all.
+  // The response is delivered through reply delivery (webchat) but not
+  // via WebSocket chat/agent events. We detect these "silent runs"
+  // (lifecycle start → end without assistant events) and fetch the
+  // response from session history.
+  private silentRunPending = new Map<string, { sessionKey: string }>();
+
+  // ── Agent assistant fallback ──
+  // Some providers emit agent assistant events but not chat delta events.
+  // We use these as a fallback when no chat deltas arrive.
+  private static readonly FALLBACK_GRACE_MS = 2000;
+  private lastChatDeltaTs: number = 0;
+  private agentFallbackActive = false;
+
   // ── Stream micro-batching ──
   // Buffer WebSocket chunks and flush to React every STREAM_FLUSH_MS
   // to reduce re-renders from every event to ~20 FPS max
@@ -172,6 +187,9 @@ export class ChatHandler {
     this.forceFlushStream();
     this.currentStreamContent = '';
     this.currentRunId = null;
+    this.silentRunPending.clear();
+    this.lastChatDeltaTs = 0;
+    this.agentFallbackActive = false;
   }
 
   /** Flush buffered stream content to the UI */
@@ -344,6 +362,270 @@ export class ChatHandler {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // Silent Run Handler — for providers that don't stream at all
+  //
+  // Some providers (e.g., Gemini with thinking) complete the entire
+  // response without emitting any streaming events. The response is
+  // only available in the session transcript. We detect these "silent
+  // runs" and fetch the latest response from history.
+  // ═══════════════════════════════════════════════════════════
+  /**
+   * Split <think>...</think> tags from response text.
+   * Returns { thinking, response } where thinking is the extracted content
+   * and response is the text with tags removed.
+   * Handles: <think>content</think>, unclosed <think>content, and multiple blocks.
+   */
+  private static splitThinkingTags(text: string): { thinking: string; response: string } {
+    if (!text) return { thinking: '', response: '' };
+
+    let thinking = '';
+    let response = text;
+
+    // Match <think>...</think> blocks (case-insensitive, multiline)
+    const thinkRegex = /<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/gi;
+    const matches = [...text.matchAll(thinkRegex)];
+
+    if (matches.length > 0) {
+      // Extract all thinking content
+      thinking = matches.map(m => m[1].trim()).join('\n\n');
+      // Remove thinking blocks from response
+      response = text.replace(thinkRegex, '').trim();
+    } else {
+      // Handle unclosed <think> tag — no closing </think> found.
+      // Can't reliably separate thinking from response, so just strip the tag
+      // and return everything as response (no thinking extraction).
+      const openMatch = text.match(/^<think(?:ing)?>\s*/i);
+      if (openMatch) {
+        thinking = '';
+        response = text.slice(openMatch[0].length).trim();
+      }
+    }
+
+    return { thinking, response };
+  }
+
+  /**
+   * Post-finalization: fetch reasoning from the session transcript.
+   * The Gateway stores reasoning as a separate "Reasoning:" prefixed message
+   * but does NOT emit it via WebSocket. We fetch it and attach to the message.
+   */
+  private async fetchReasoningFromHistory(messageId: string) {
+    // Small delay to let the Gateway commit the transcript
+    await new Promise(r => setTimeout(r, 300));
+
+    try {
+      const result = await this.conn.request('chat.history', {
+        sessionKey: 'agent:main:main',
+        limit: 5,
+      });
+
+      const messages: any[] = result?.messages || result || [];
+      if (!Array.isArray(messages) || messages.length === 0) return;
+
+      // Look for a "Reasoning:" prefixed assistant message
+      const reasoningPrefix = /^Reasoning:\s*/i;
+      const reasoningMsg = [...messages].reverse().find(
+        (m: any) => m.role === 'assistant' && reasoningPrefix.test(extractText(m.content))
+      );
+
+      if (!reasoningMsg) return;
+
+      const rawReasoning = extractText(reasoningMsg.content);
+      const reasoning = rawReasoning.replace(reasoningPrefix, '').trim();
+      if (!reasoning) return;
+
+      // Update the message with thinkingContent directly in the store
+      useChatStore.getState().updateMessageThinking(messageId, reasoning);
+      console.log('[GW] 🧠 Reasoning fetched from transcript:', reasoning.length, 'chars');
+    } catch (err) {
+      // Non-critical — just log and continue
+      console.warn('[GW] Could not fetch reasoning from transcript:', err);
+    }
+  }
+
+  private async handleSilentRunEnd(sessionKey: string, runId: string) {
+    // Small delay to let the Gateway finalize the transcript
+    await new Promise(r => setTimeout(r, 500));
+
+    try {
+      const result = await this.conn.request('chat.history', {
+        sessionKey: sessionKey || 'agent:main:main',
+        limit: 5,
+      });
+
+      const messages: any[] = result?.messages || result || [];
+      if (!Array.isArray(messages) || messages.length === 0) return;
+
+      // Find the latest assistant message
+      const lastAssistant = [...messages].reverse().find(
+        (m: any) => m.role === 'assistant'
+      );
+
+      if (!lastAssistant) return;
+
+      // ── Extract thinking and response from content ──
+      // Strategy: check multiple sources, preferring structured data over tag parsing.
+      //
+      // Source 1: dedicated thinkingContent field
+      // Source 2: content blocks — separate "thinking" blocks from "text" blocks
+      // Source 3: <think>...</think> tags in the text (fallback)
+      let thinking = '';
+      let responseText = '';
+
+      // Source 1: thinkingContent field
+      if (typeof lastAssistant.thinkingContent === 'string' && lastAssistant.thinkingContent.trim()) {
+        thinking = lastAssistant.thinkingContent;
+      }
+
+      // Source 2: content blocks (array of {type, text/thinking} objects)
+      if (Array.isArray(lastAssistant.content)) {
+        const thinkingBlocks: string[] = [];
+        const textBlocks: string[] = [];
+
+        for (const block of lastAssistant.content) {
+          if (block.type === 'thinking' && (typeof block.thinking === 'string' || typeof block.text === 'string')) {
+            thinkingBlocks.push(block.thinking || block.text);
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            textBlocks.push(block.text);
+          }
+        }
+
+        if (thinkingBlocks.length > 0 && !thinking) {
+          thinking = thinkingBlocks.join('\n');
+        }
+
+        // Use ONLY text blocks for display (excludes thinking blocks)
+        if (thinkingBlocks.length > 0 && textBlocks.length > 0) {
+          responseText = textBlocks.join('\n');
+        }
+      }
+
+      // Get the full raw text (all blocks merged) as fallback
+      const rawText = responseText || extractText(lastAssistant.content);
+      if (!rawText || !rawText.trim()) return;
+
+      // Skip silent replies
+      const trimmed = rawText.trim();
+      if (trimmed === 'NO_REPLY' || trimmed === 'HEARTBEAT_OK') return;
+
+      // Source 3: <think>...</think> tags in text (only if no thinking found yet)
+      let displayText = rawText;
+      if (!thinking) {
+        const { thinking: tagThinking, response: cleanResponse } = ChatHandler.splitThinkingTags(rawText);
+        if (tagThinking) {
+          thinking = tagThinking;
+          // Only use cleanResponse if the regex found a proper closing tag
+          // (cleanResponse will be non-empty if </think> was found)
+          if (cleanResponse) {
+            displayText = cleanResponse;
+          }
+        }
+      } else {
+        // We already have thinking from blocks — use responseText as display
+        displayText = responseText || rawText;
+      }
+
+      displayText = stripDirectives(displayText);
+
+      // Set thinking content for ThinkingBubble BEFORE creating the message
+      if (thinking) {
+        useChatStore.getState().setThinkingStream(runId, thinking);
+      }
+
+      if (!displayText.trim()) {
+        // Nothing visible to display. Clear thinking to prevent leakage.
+        if (!thinking) {
+          useChatStore.getState().clearThinking();
+        }
+        console.log('[GW] 📥 Silent run — thinking only:', thinking.length, 'chars');
+        return;
+      }
+
+      // Display the clean response
+      this.conn.callbacks?.onStreamEnd(runId, displayText);
+      console.log('[GW] 📥 Silent run — response:', displayText.length, 'chars, thinking:', thinking.length, 'chars');
+
+    } catch (err) {
+      console.error('[GW] Failed to fetch silent run response:', err);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // Agent Assistant Fallback — for providers without chat deltas
+  //
+  // Some providers (e.g., Gemini with thinking) send the response
+  // only through agent "assistant" events, not chat "delta" events.
+  // This fallback intercepts those agent events and displays them
+  // as streaming text in the UI.
+  // ═══════════════════════════════════════════════════════════
+  private handleAgentAssistantFallback(payload: any) {
+    const runId = payload.runId || '';
+    const text = typeof payload.data?.text === 'string' ? payload.data.text : '';
+    if (!runId || !text) return;
+
+    const cleaned = stripDirectives(text);
+    // Strip workshop/button markers visually during streaming
+    const display = cleaned
+      .replace(/\[\[workshop:\w+(?:\s+\w+="[^"]*")*\]\]/g, '')
+      .replace(/\[\[button:[^\]]+\]\]/g, '');
+
+    // New fallback run — reset state
+    if (runId !== this.currentRunId) {
+      this.forceFlushStream();
+      this.currentStreamContent = '';
+      this.currentRunId = runId;
+    }
+
+    this.agentFallbackActive = true;
+    this.currentStreamContent = text;
+    this.bufferStreamChunk(runId, display);
+  }
+
+  private finalizeAgentFallback() {
+    if (!this.agentFallbackActive || !this.currentStreamContent) {
+      this.agentFallbackActive = false;
+      return;
+    }
+
+    this.forceFlushStream();
+
+    let finalText = this.currentStreamContent;
+    const mId = this.currentRunId || `msg-${Date.now()}`;
+
+    this.currentStreamContent = '';
+    this.currentRunId = null;
+    this.agentFallbackActive = false;
+
+    // Strip directive tags
+    finalText = stripDirectives(finalText);
+
+    // Parse and execute Workshop commands
+    const { cleanContent, executed } = parseAndExecuteWorkshopCommands(finalText);
+    if (executed.length > 0) {
+      finalText = cleanContent + (cleanContent ? '\n\n' : '') + executed.join('\n');
+    } else {
+      finalText = cleanContent || finalText;
+    }
+
+    // Parse [[button:...]] markers
+    const btnResult = parseButtons(finalText);
+    if (btnResult.buttons.length > 0) {
+      finalText = btnResult.cleanContent;
+      useChatStore.getState().setQuickReplies(btnResult.buttons);
+    } else {
+      useChatStore.getState().setQuickReplies([]);
+    }
+
+    // Deliver to UI
+    const consumed = resolveResponse(mId, finalText);
+    if (!consumed) {
+      this.conn.callbacks?.onStreamEnd(mId, finalText);
+    }
+
+    console.log('[GW] 🔄 Agent fallback finalized:', finalText.length, 'chars');
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // Event Handler — OpenClaw Protocol
   //
   // Gateway sends: { type:"event", event:"chat", payload: {
@@ -379,8 +661,99 @@ export class ChatHandler {
       }
     }
 
-    // Non-chat events → forward to central data store
+    // ── Exec approval requests ──
+    if (event === 'exec.approval.requested') {
+      const req = p?.request || p;
+      if (req?.id && req?.command) {
+        useChatStore.getState().addExecApproval({
+          id: req.id || p.id,
+          command: req.command,
+          cwd: req.cwd || null,
+          expiresAt: p.expiresAtMs || (Date.now() + 120000),
+        });
+      }
+    }
+    if (event === 'exec.approval.resolved') {
+      const id = p?.id || p?.request?.id;
+      if (id) useChatStore.getState().removeExecApproval(id);
+    }
+
+    // ── Model fallback detection ──
+    if (event === 'agent' && (p.stream === 'fallback' || p.stream === 'lifecycle')) {
+      const data = p.data || {};
+      const fromModel = data.selectedModel || data.fromModel;
+      const toModel = data.activeModel || data.toModel;
+      if (fromModel && toModel && fromModel !== toModel) {
+        const reason = data.reasonSummary || data.reason;
+        useChatStore.getState().setFallbackInfo({ from: fromModel, to: toModel, reason });
+        // Auto-clear after 15 seconds
+        setTimeout(() => useChatStore.getState().setFallbackInfo(null), 15000);
+      }
+      if (data.phase === 'fallback_cleared') {
+        useChatStore.getState().setFallbackInfo(null);
+      }
+    }
+
+    // Non-chat events → forward to central data store (+ agent fallback for Gemini etc.)
     if (event !== 'chat') {
+      if (event === 'agent') {
+        const agentSessionKey = p.sessionKey || '';
+        const isIsolated = agentSessionKey && (
+          agentSessionKey.includes(':subagent:') || agentSessionKey.includes(':cron:')
+        );
+
+        if (!isIsolated) {
+          const runId = p.runId || '';
+
+          // ── Silent run tracking ──
+          // Track lifecycle start for non-isolated sessions
+          if (p.stream === 'lifecycle' && p.data?.phase === 'start' && runId) {
+            this.silentRunPending.set(runId, { sessionKey: agentSessionKey });
+          }
+
+          // ── Agent thinking → ThinkingBubble display ──
+          if (p.stream === 'thinking') {
+            this.handleThinkingStream(p);
+            // Has streaming content — not a silent run
+            if (runId) this.silentRunPending.delete(runId);
+          }
+
+          // ── Agent assistant events ──
+          if (p.stream === 'assistant' && typeof p.data?.text === 'string') {
+            // Has streaming content — not a silent run
+            if (runId) this.silentRunPending.delete(runId);
+
+            // Fallback: display via agent events if no chat deltas arrive.
+            // Check CONTINUOUSLY — if chat deltas started arriving after fallback
+            // began, deactivate the fallback to prevent duplicate display.
+            const recentChatDelta = Date.now() - this.lastChatDeltaTs < ChatHandler.FALLBACK_GRACE_MS;
+            if (recentChatDelta && this.agentFallbackActive) {
+              // Chat deltas are now active — abandon fallback, chat handler will display
+              this.agentFallbackActive = false;
+              this.currentStreamContent = '';
+              this.currentRunId = null;
+            } else if (runId && !recentChatDelta) {
+              this.handleAgentAssistantFallback(p);
+            }
+          }
+
+          // ── Agent lifecycle end ──
+          if (p.stream === 'lifecycle' && p.data?.phase === 'end') {
+            // Finalize agent fallback if active
+            if (this.agentFallbackActive) {
+              this.finalizeAgentFallback();
+            }
+
+            // Detect silent runs (no assistant events at all) → fetch from history
+            const pending = runId ? this.silentRunPending.get(runId) : undefined;
+            if (pending) {
+              this.silentRunPending.delete(runId);
+              this.handleSilentRunEnd(pending.sessionKey, runId);
+            }
+          }
+        }
+      }
+
       handleGatewayEvent(event, p);
       return;
     }
@@ -468,13 +841,15 @@ export class ChatHandler {
       this.currentRunId = null;
       return; // Don't show as a regular message
     }
-
     // Check if this runId is being awaited by Voice Live (responseBus).
     // If so, skip chat UI updates — Voice pipeline handles it separately.
     const isVoiceWaiter = runId ? hasPendingWaiter(runId) : false;
 
     switch (state) {
       case 'delta': {
+        // Mark that chat deltas are active (disables agent fallback)
+        this.lastChatDeltaTs = Date.now();
+
         // Voice Live responses: only track content, don't show in chat UI
         if (isVoiceWaiter) {
           this.currentStreamContent = messageText;
@@ -547,6 +922,14 @@ export class ChatHandler {
         const consumed = resolveResponse(runId, finalText);
         if (!consumed) {
           this.conn.callbacks?.onStreamEnd(mId, finalText, media);
+
+          // Post-finalization: fetch reasoning from transcript if not captured via streaming.
+          // The Gateway stores "Reasoning:" prefixed messages in the transcript
+          // but does NOT emit them via WebSocket events.
+          const hasThinking = useChatStore.getState().thinkingText;
+          if (!hasThinking) {
+            this.fetchReasoningFromHistory(mId);
+          }
         }
         break;
       }

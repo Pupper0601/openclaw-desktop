@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Plus, Shield, MessageSquare, ChevronDown, Zap, RotateCcw } from 'lucide-react';
+import { Plus, Shield, MessageSquare, ChevronDown, Zap, RotateCcw, Bot } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useTranslation } from 'react-i18next';
 import { useChatStore, Session } from '@/stores/chatStore';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { themeHex, themeAlpha, dataColor } from '@/utils/theme-colors';
 import clsx from 'clsx';
 
@@ -201,6 +201,7 @@ function SessionDropdown({ open, onClose, onSelect, openTabs, sessions, activeKe
 }) {
   const { t } = useTranslation();
   const [availableSessions, setAvailableSessions] = useState<Session[]>([]);
+  const [groupedSessions, setGroupedSessions] = useState<Record<string, Session[]>>({});
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -224,13 +225,25 @@ function SessionDropdown({ open, onClose, onSelect, openTabs, sessions, activeKe
       .then((result: any) => {
         const list: Session[] = (result?.sessions || []).map((s: any) => ({
           key: s.key || s.sessionKey,
-          label: s.label || s.key || '',
+          label: s.label || '',
           kind: s.kind,
+          agentId: s.agentId || (s.key?.split(':')[1]) || 'unknown',
+          agentName: s.agentName || s.agent?.name || '',
           lastMessage: s.lastMessage,
           lastTimestamp: s.lastTimestamp,
         }));
         // Sessions not already in open tabs
-        setAvailableSessions(list.filter((s) => !openTabs.includes(s.key) && isMainSession(s.key)));
+        const available = list.filter((s) => !openTabs.includes(s.key));
+        setAvailableSessions(available.filter((s) => isMainSession(s.key)));
+
+        // Group all sessions by agent
+        const groups: Record<string, Session[]> = {};
+        for (const s of available) {
+          const agent = (s as any).agentId || s.key.split(':')[1] || 'other';
+          if (!groups[agent]) groups[agent] = [];
+          groups[agent].push(s);
+        }
+        setGroupedSessions(groups);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -296,31 +309,47 @@ function SessionDropdown({ open, onClose, onSelect, openTabs, sessions, activeKe
             </div>
           )}
 
-          {/* Divider + available sessions */}
-          {availableSessions.length > 0 && (
+          {/* Divider + sessions grouped by agent (Control UI style) */}
+          {Object.keys(groupedSessions).length > 0 && (
             <>
               <div className="mx-3 border-t border-[rgb(var(--aegis-overlay)/0.06)]" />
-              <div className="p-2">
-                <div className="text-[9px] text-aegis-text-dim uppercase tracking-wider px-2 py-1 mb-0.5">
-                  {t('chat.otherSessions', 'Other Sessions')}
-                </div>
-                {availableSessions.map((session) => (
-                  <button
-                    key={session.key}
-                    onClick={() => { onSelect(session.key); onClose(); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-start hover:bg-[rgb(var(--aegis-overlay)/0.05)] transition-colors border border-transparent"
-                  >
-                    <MessageSquare size={14} className="text-aegis-text-dim shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12px] text-aegis-text font-medium truncate">
-                        {session.label || session.key}
+              <div className="py-1">
+                {Object.entries(groupedSessions).map(([agentId, agentSessions]) => {
+                  // Derive display name: use agentName from first session, or capitalize agentId
+                  const agentDisplayName = (agentSessions[0] as any)?.agentName
+                    || agentId.charAt(0).toUpperCase() + agentId.slice(1);
+                  return (
+                    <div key={agentId} className="mb-0.5">
+                      {/* Agent group header — like Control UI: "AEGIS (main)" */}
+                      <div className="px-3 py-1.5 text-[11px] font-bold text-aegis-text">
+                        {agentDisplayName} <span className="text-aegis-text-dim font-normal">({agentId})</span>
                       </div>
-                      {session.kind && (
-                        <div className="text-[9px] text-aegis-text-dim font-mono mt-0.5">{session.kind}</div>
-                      )}
+                      {/* Sessions under this agent */}
+                      {agentSessions.map((session) => {
+                        // Format session key: extract readable part after agent:id:
+                        const keyParts = session.key.split(':');
+                        const sessionPart = keyParts.slice(2).join(':') || session.key;
+                        const displayLabel = session.label || sessionPart;
+                        return (
+                          <button
+                            key={session.key}
+                            onClick={() => { onSelect(session.key); onClose(); }}
+                            className="w-full flex items-center gap-2 px-4 py-1.5 text-start hover:bg-[rgb(var(--aegis-overlay)/0.05)] transition-colors"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="text-[11px] text-aegis-text-muted font-mono truncate">
+                                {displayLabel}
+                              </div>
+                            </div>
+                            {session.kind && (
+                              <span className="text-[9px] text-aegis-text-dim shrink-0">{session.kind}</span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             </>
           )}

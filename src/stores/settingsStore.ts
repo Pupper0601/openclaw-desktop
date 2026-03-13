@@ -16,6 +16,7 @@ interface SettingsState {
   dndMode: boolean;
   budgetLimit: number;
   commandPaletteOpen: boolean;
+  focusMode: boolean;
   memoryExplorerEnabled: boolean;
   memoryMode: 'api' | 'local';
   memoryApiUrl: string;
@@ -38,6 +39,7 @@ interface SettingsState {
   setDndMode: (dnd: boolean) => void;
   setBudgetLimit: (n: number) => void;
   setCommandPaletteOpen: (open: boolean) => void;
+  toggleFocusMode: () => void;
   setMemoryExplorerEnabled: (enabled: boolean) => void;
   setMemoryMode: (mode: 'api' | 'local') => void;
   setMemoryApiUrl: (url: string) => void;
@@ -82,6 +84,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   dndMode: false,
   budgetLimit: parseFloat(localStorage.getItem('aegis-budget-limit') || '0') || 0,
   commandPaletteOpen: false,
+  focusMode: false,
   memoryExplorerEnabled: localStorage.getItem('aegis-memory-explorer') === 'true',
   memoryMode: (localStorage.getItem('aegis-memory-mode') || 'local') as 'api' | 'local',
   memoryApiUrl: localStorage.getItem('aegis-memory-api-url') || 'http://localhost:3040',
@@ -112,6 +115,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   setDndMode: (dnd) => set({ dndMode: dnd }),
   setBudgetLimit: (n) => { localStorage.setItem('aegis-budget-limit', String(n)); set({ budgetLimit: n }); },
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
+  toggleFocusMode: () => set((s) => ({ focusMode: !s.focusMode })),
   setMemoryExplorerEnabled: (enabled) => { localStorage.setItem('aegis-memory-explorer', String(enabled)); set({ memoryExplorerEnabled: enabled }); },
   setMemoryMode: (mode) => { localStorage.setItem('aegis-memory-mode', mode); set({ memoryMode: mode }); },
   setMemoryApiUrl: (url) => { localStorage.setItem('aegis-memory-api-url', url); set({ memoryApiUrl: url }); },

@@ -1,11 +1,11 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
-import { ArrowDown, Download, Loader2, Search, X, Zap } from 'lucide-react';
+import { ArrowDown, Download, Loader2, Search, X, Zap, Pin, PinOff, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useShallow } from 'zustand/react/shallow';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 import { useChatStore, type ChatMessage } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { MessageBubble } from './MessageBubble';
 import { ToolCallBubble } from './ToolCallBubble';
 import { ThinkingBubble } from './ThinkingBubble';
@@ -74,6 +74,7 @@ export function ChatView() {
   const thinkingRunId = useChatStore((s) => s.thinkingRunId);
   const quickReplies = useChatStore((s) => s.quickReplies);
   const isLoadingHistory = useChatStore((s) => s.isLoadingHistory);
+  const fallbackInfo = useChatStore((s) => s.fallbackInfo);
 
   const { connected, connecting, connectionError } = useChatStore(
     useShallow((s) => ({ connected: s.connected, connecting: s.connecting, connectionError: s.connectionError }))
@@ -139,6 +140,18 @@ export function ChatView() {
       virtuosoRef.current.scrollToIndex({ index: searchResults[searchIndex], behavior: 'smooth', align: 'center' });
     }
   }, [searchIndex, searchResults]);
+
+  // Listen for pinned message scroll requests
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const idx = (e as CustomEvent).detail?.index;
+      if (idx >= 0 && virtuosoRef.current) {
+        virtuosoRef.current.scrollToIndex({ index: idx, behavior: 'smooth', align: 'center' });
+      }
+    };
+    window.addEventListener('aegis:scroll-to-index', handler);
+    return () => window.removeEventListener('aegis:scroll-to-index', handler);
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({
@@ -303,8 +316,67 @@ export function ChatView() {
     </div>
   ), [thinkingText, thinkingRunId, isTyping]);
 
+  // ── Drag & drop overlay for file uploads ──
+  const [dragging, setDragging] = useState(false);
+  const dragCounter = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current++;
+    if (e.dataTransfer.types.includes('Files')) setDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current--;
+    if (dragCounter.current === 0) setDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragging(false);
+    // Forward drop event to MessageInput via custom event
+    window.dispatchEvent(new CustomEvent('aegis:file-drop', { detail: { files: Array.from(e.dataTransfer.files) } }));
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-aegis-bg">
+    <div
+      className="flex flex-col flex-1 min-h-0 bg-aegis-bg relative"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {/* Drag overlay */}
+      {dragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-aegis-bg/80 backdrop-blur-sm border-2 border-dashed border-aegis-primary/40 rounded-xl m-2 pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-aegis-primary">
+            <Download size={40} className="animate-bounce" />
+            <span className="text-[14px] font-semibold">Drop files here</span>
+            <span className="text-[11px] text-aegis-text-dim">Images, PDFs, documents...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Pinned Messages */}
+      <PinnedMessagesBar />
+
+      {/* Fallback Indicator */}
+      {fallbackInfo && (
+        <div className="shrink-0 px-4 py-1.5 text-center text-[11px] bg-amber-500/10 text-amber-400 border-b border-amber-500/15 flex items-center justify-center gap-2">
+          <span className="w-1.5 h-1.5 bg-amber-400 rounded-full animate-pulse" />
+          <span>Model fallback: <strong>{fallbackInfo.from}</strong> → <strong>{fallbackInfo.to}</strong></span>
+          {fallbackInfo.reason && <span className="opacity-60">({fallbackInfo.reason})</span>}
+          <button onClick={() => useChatStore.getState().setFallbackInfo(null)} className="ml-2 opacity-40 hover:opacity-80 text-[10px]">✕</button>
+        </div>
+      )}
+
       {/* Connection Banner */}
       {!connected && (
         <div className={clsx(
@@ -332,7 +404,7 @@ export function ChatView() {
         </div>
       )}
 
-      {/* Search Bar */}
+      {/* Search Bar (Ctrl+F in-chat search) */}
       {searchOpen && (
         <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-aegis-border bg-aegis-elevated/50">
           <Search size={14} className="text-aegis-text-muted shrink-0" />
@@ -440,7 +512,91 @@ export function ChatView() {
         />
       )}
 
+      {/* Exec Approval Requests */}
+      <ExecApprovalBar />
+
       <MessageInput />
+    </div>
+  );
+}
+
+// ── Pinned Messages Bar ──
+function PinnedMessagesBar() {
+  const pinnedMessages = useChatStore((s) => s.pinnedMessages);
+  const unpinMessage = useChatStore((s) => s.unpinMessage);
+  const renderBlocks = useChatStore((s) => s.renderBlocks);
+  const [expanded, setExpanded] = useState(false);
+
+  if (pinnedMessages.length === 0) return null;
+
+  const scrollToMessage = (messageId: string) => {
+    const idx = renderBlocks.findIndex((b: any) => b.id === messageId);
+    if (idx >= 0) {
+      // Dispatch event for ChatView to handle scroll
+      window.dispatchEvent(new CustomEvent('aegis:scroll-to-index', { detail: { index: idx } }));
+    }
+  };
+
+  return (
+    <div className="shrink-0 border-b border-aegis-border/10">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-amber-400 hover:bg-amber-500/5 transition-colors"
+      >
+        <Pin size={11} />
+        <span className="font-medium">{pinnedMessages.length} pinned</span>
+        <ChevronDown size={11} className={clsx('ml-auto transition-transform', expanded && 'rotate-180')} />
+      </button>
+      {expanded && (
+        <div className="px-4 pb-2 flex flex-col gap-1 max-h-32 overflow-y-auto scrollbar-thin">
+          {pinnedMessages.map((p) => (
+            <div key={p.id} className="flex items-center gap-2 px-2 py-1 rounded-md bg-[rgb(var(--aegis-overlay)/0.03)] text-[11px] cursor-pointer hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+              onClick={() => scrollToMessage(p.id)}
+            >
+              <span className="flex-1 truncate text-aegis-text-muted">{p.text}</span>
+              <button onClick={(e) => { e.stopPropagation(); unpinMessage(p.id); }} className="shrink-0 opacity-40 hover:opacity-80">
+                <PinOff size={10} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Exec Approval Bar ──
+function ExecApprovalBar() {
+  const approvals = useChatStore((s) => s.execApprovals);
+  const removeApproval = useChatStore((s) => s.removeExecApproval);
+
+  if (approvals.length === 0) return null;
+
+  return (
+    <div className="shrink-0 flex flex-col gap-1.5 px-4 py-2 border-t border-aegis-border/10">
+      {approvals.map((a) => (
+        <div key={a.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-amber-500/8 border border-amber-500/15">
+          <div className="flex-1 min-w-0">
+            <div className="text-[11px] text-amber-400 font-medium mb-0.5">⚡ Exec Approval Required</div>
+            <code className="text-[12px] text-aegis-text block truncate" title={a.command}>{a.command}</code>
+            {a.cwd && <span className="text-[10px] text-aegis-text-dim">in {a.cwd}</span>}
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'allow-once'); } catch {} removeApproval(a.id); }}
+              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/20 transition-colors"
+            >Allow Once</button>
+            <button
+              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'allow-always'); } catch {} removeApproval(a.id); }}
+              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/20 transition-colors"
+            >Always</button>
+            <button
+              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'deny'); } catch {} removeApproval(a.id); }}
+              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/15 transition-colors"
+            >Deny</button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

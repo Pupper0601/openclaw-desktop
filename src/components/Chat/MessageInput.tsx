@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Paperclip, Camera, Mic, X, Loader2, Square } from 'lucide-react';
+import { Send, Paperclip, Camera, Mic, X, Loader2, Square, FilePlus, RotateCcw, StopCircle, RefreshCw, Layers, Zap, Lightbulb, Eraser, Maximize, Terminal, BarChart3, Info, Download, MessageSquare } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { ScreenshotPicker } from './ScreenshotPicker';
 import { VoiceRecorder } from './VoiceRecorder';
+import { SpeechToText, isSpeechRecognitionSupported } from './SpeechToText';
 import { EmojiPicker } from './EmojiPicker';
 import { getDirection } from '@/i18n';
 import clsx from 'clsx';
@@ -24,6 +25,23 @@ interface PendingFile {
   path?: string;  // Windows path — non-image files send path instead of base64
 }
 
+// ── Slash commands definition ──
+const SLASH_COMMANDS = [
+  { cmd: '/new', label: 'New Session', icon: FilePlus },
+  { cmd: '/reset', label: 'Reset Session', icon: RotateCcw },
+  { cmd: '/stop', label: 'Stop Generation', icon: StopCircle },
+  { cmd: '/compact', label: 'Compact Context', icon: RefreshCw },
+  { cmd: '/model', label: 'Change Model', icon: Layers, hasArg: true },
+  { cmd: '/fast', label: 'Toggle Fast Mode', icon: Zap },
+  { cmd: '/think', label: 'Toggle Thinking', icon: Lightbulb, hasArg: true },
+  { cmd: '/clear', label: 'Clear Display', icon: Eraser },
+  { cmd: '/focus', label: 'Focus Mode', icon: Maximize },
+  { cmd: '/verbose', label: 'Toggle Verbose', icon: Terminal },
+  { cmd: '/usage', label: 'Token Usage', icon: BarChart3 },
+  { cmd: '/status', label: 'Session Status', icon: Info },
+  { cmd: '/export', label: 'Export Chat', icon: Download },
+];
+
 export function MessageInput() {
   const { t } = useTranslation();
   const { language } = useSettingsStore();
@@ -32,7 +50,10 @@ export function MessageInput() {
   const [text, setText] = useState(() => drafts[activeSessionKey] || '');
   const [files, setFiles] = useState<PendingFile[]>([]);
   const [screenshotOpen, setScreenshotOpen] = useState(false);
-  const [voiceMode, setVoiceMode] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<false | 'record' | 'stt'>(false);
+  const [voiceMenuOpen, setVoiceMenuOpen] = useState(false);
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashMenuIndex, setSlashMenuIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync draft when switching sessions
@@ -54,6 +75,56 @@ export function MessageInput() {
   }, [text]);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
+
+  // Close voice menu on outside click (with delay to avoid instant close)
+  const voiceMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!voiceMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (voiceMenuRef.current && !voiceMenuRef.current.contains(e.target as Node)) {
+        setVoiceMenuOpen(false);
+      }
+    };
+    // Delay adding listener so the opening click doesn't immediately close it
+    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 50);
+    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler); };
+  }, [voiceMenuOpen]);
+
+  // Listen for file drops from ChatView overlay
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const droppedFiles = (e as CustomEvent).detail?.files as File[];
+      if (!droppedFiles?.length) return;
+      for (const file of droppedFiles) {
+        const isImage = file.type.startsWith('image/');
+        const filePath = (file as any).path || '';
+        if (isImage) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.replace(/^data:[^;]+;base64,/, '');
+            setFiles((prev) => [...prev, { name: file.name, base64, mimeType: file.type, isImage: true, size: file.size, preview: dataUrl, path: filePath }]);
+          };
+          reader.readAsDataURL(file);
+        } else {
+          setFiles((prev) => [...prev, { name: file.name, base64: '', mimeType: file.type || 'application/octet-stream', isImage: false, size: file.size, path: filePath }]);
+        }
+      }
+    };
+    window.addEventListener('aegis:file-drop', handler);
+    return () => window.removeEventListener('aegis:file-drop', handler);
+  }, []);
+
+  // ── Slash menu logic ──
+  const slashQuery = text.startsWith('/') ? text.split(' ')[0].toLowerCase() : '';
+  const filteredSlash = slashQuery
+    ? SLASH_COMMANDS.filter(c => c.cmd.startsWith(slashQuery))
+    : SLASH_COMMANDS;
+
+  useEffect(() => {
+    setSlashMenuOpen(text.startsWith('/') && !text.includes(' ') && text.length < 15);
+    setSlashMenuIndex(0);
+  }, [text]);
 
   const handleSend = useCallback(async () => {
     const trimmed = text.trim();
@@ -116,7 +187,54 @@ export function MessageInput() {
     }
   }, [text, files, isSending, connected, addMessage, setIsSending, setIsTyping, messages, historyLoader]);
 
+  const handleSlashSelect = async (cmd: string) => {
+    const hasArg = SLASH_COMMANDS.find(c => c.cmd === cmd)?.hasArg;
+    setSlashMenuOpen(false);
+    if (!hasArg) {
+      // Clear display locally for /clear
+      if (cmd === '/clear') {
+        useChatStore.getState().clearMessages();
+        setText('');
+        return;
+      }
+      if (cmd === '/focus') {
+        useSettingsStore.getState().toggleFocusMode();
+        setText('');
+        return;
+      }
+      // Send slash command to gateway
+      setText('');
+      setIsTyping(true);
+      try { await gateway.sendMessage(cmd, undefined, activeSessionKey); } catch {}
+    } else {
+      setText(cmd + ' ');
+      textareaRef.current?.focus();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (slashMenuOpen && filteredSlash.length > 0) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i > 0 ? i - 1 : filteredSlash.length - 1));
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSlashMenuIndex((i) => (i < filteredSlash.length - 1 ? i + 1 : 0));
+        return;
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault();
+        handleSlashSelect(filteredSlash[slashMenuIndex].cmd);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSlashMenuOpen(false);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
@@ -161,6 +279,13 @@ export function MessageInput() {
     }]);
     textareaRef.current?.focus();
   };
+
+  // ── STT result handler ──
+  const handleSTTResult = useCallback((text: string) => {
+    setVoiceMode(false);
+    setText((prev) => (prev ? prev + ' ' + text : text));
+    textareaRef.current?.focus();
+  }, []);
 
   const handleVoiceSend = useCallback(async (base64: string, mimeType: string, durationSec: number, localUrl: string) => {
     setVoiceMode(false);
@@ -250,34 +375,70 @@ export function MessageInput() {
 
   return (
     <div className="shrink-0 border-t border-[rgb(var(--aegis-overlay)/0.04)] bg-[var(--aegis-bg-frosted-60)] backdrop-blur-xl">
-      {/* File Previews */}
+      {/* File Previews — improved cards */}
       {files.length > 0 && (
-        <div className="flex gap-2 px-4 pt-3 overflow-x-auto scrollbar-hidden">
+        <div className="flex gap-2.5 px-4 pt-3 pb-1 overflow-x-auto scrollbar-hidden">
           {files.map((file, i) => (
-            <div key={i} className="relative shrink-0 w-[72px] h-[72px] rounded-xl border border-aegis-border/40 overflow-hidden bg-aegis-surface group">
+            <div key={i} className="relative shrink-0 rounded-xl border border-aegis-border/30 overflow-hidden bg-aegis-surface/60 group transition-all hover:border-aegis-border/50">
               {file.isImage && file.preview ? (
-                <img src={file.preview} alt={file.name} className="w-full h-full object-cover" />
+                <div className="w-[80px] h-[80px]">
+                  <img src={file.preview} alt={file.name} className="w-full h-full object-cover" />
+                </div>
               ) : (
-                <div className="w-full h-full flex flex-col items-center justify-center p-1">
-                  <span className="text-xl">{getFileIcon(file.mimeType)}</span>
-                  <span className="text-[8px] text-aegis-text-dim truncate w-full text-center mt-0.5">{file.name}</span>
+                <div className="flex items-center gap-2.5 px-3 py-2.5 min-w-[160px] max-w-[220px]">
+                  <span className="text-2xl shrink-0">{getFileIcon(file.mimeType)}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] text-aegis-text font-medium truncate">{file.name}</div>
+                    <div className="text-[9px] text-aegis-text-dim mt-0.5">{formatSize(file.size)}</div>
+                  </div>
                 </div>
               )}
+              {/* Remove button */}
               <button onClick={() => removeFile(i)}
-                className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-aegis-danger/90 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <X size={9} className="text-aegis-text" />
+                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-aegis-bg-solid/90 border border-aegis-border/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-aegis-danger/80">
+                <X size={10} className="text-aegis-text" />
               </button>
-              <div className="absolute bottom-0 left-0 right-0 bg-aegis-bg-solid/80 text-[7px] text-center text-aegis-text py-0.5">
-                {formatSize(file.size)}
-              </div>
+              {/* Size badge for images */}
+              {file.isImage && (
+                <div className="absolute bottom-0 left-0 right-0 bg-aegis-bg-solid/80 backdrop-blur-sm text-[8px] text-center text-aegis-text-dim py-0.5">
+                  {formatSize(file.size)}
+                </div>
+              )}
             </div>
           ))}
         </div>
       )}
 
+      {/* Slash Command Autocomplete */}
+      {slashMenuOpen && filteredSlash.length > 0 && (
+        <div className="mx-3 mb-1 rounded-xl border border-aegis-border/15 bg-aegis-surface/95 backdrop-blur-xl shadow-float overflow-hidden max-h-[280px] overflow-y-auto scrollbar-thin">
+          {filteredSlash.map((cmd, i) => {
+            const Icon = cmd.icon;
+            return (
+              <button key={cmd.cmd}
+                onClick={() => handleSlashSelect(cmd.cmd)}
+                onMouseEnter={() => setSlashMenuIndex(i)}
+                className={clsx(
+                  'w-full flex items-center gap-3 px-3 py-2 text-[13px] transition-colors',
+                  i === slashMenuIndex
+                    ? 'bg-aegis-primary/10 text-aegis-text'
+                    : 'text-aegis-text-muted hover:bg-[rgb(var(--aegis-overlay)/0.04)]'
+                )}
+              >
+                <Icon size={14} className={i === slashMenuIndex ? 'text-aegis-primary' : 'text-aegis-text-dim'} />
+                <span className="font-mono font-medium">{cmd.cmd}</span>
+                <span className="text-aegis-text-dim text-[11px]">{cmd.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Input Area */}
-      {voiceMode ? (
+      {voiceMode === 'record' ? (
         <VoiceRecorder onSendVoice={handleVoiceSend} onCancel={() => setVoiceMode(false)} disabled={!connected} />
+      ) : voiceMode === 'stt' ? (
+        <SpeechToText onResult={handleSTTResult} onCancel={() => setVoiceMode(false)} />
       ) : (
         <div className="flex items-end gap-2 p-3" dir={dir}>
           {/* Input Wrapper (matches mockup) */}
@@ -288,7 +449,7 @@ export function MessageInput() {
             'focus-within:border-aegis-primary/30',
             'focus-within:shadow-[0_0_0_3px_rgb(var(--aegis-primary)/0.06),0_0_16px_rgb(var(--aegis-primary)/0.08)]',
             !connected && 'opacity-40'
-          )} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+          )}>
             {/* Action Buttons */}
             <EmojiPicker
               onSelect={(emoji) => { setText((prev) => prev + emoji); textareaRef.current?.focus(); }}
@@ -297,9 +458,8 @@ export function MessageInput() {
             {[
               { icon: Paperclip, action: handleFileSelect, title: t('input.attachFile') },
               { icon: Camera, action: () => setScreenshotOpen(true), title: t('input.screenshot') },
-              { icon: Mic, action: () => setVoiceMode(true), title: t('input.voiceRecord'), disabled: !connected },
-            ].map(({ icon: Icon, action, title, disabled }) => (
-              <button key={title} onClick={action} disabled={disabled}
+            ].map(({ icon: Icon, action, title }) => (
+              <button key={title} onClick={action}
                 className={clsx(
                   'w-[34px] h-[34px] rounded-lg flex items-center justify-center flex-shrink-0',
                   'bg-[rgb(var(--aegis-overlay)/0.03)] border-none',
@@ -310,6 +470,56 @@ export function MessageInput() {
                 <Icon size={16} />
               </button>
             ))}
+
+            {/* Mic button with voice mode picker */}
+            <div className="relative" ref={voiceMenuRef}>
+              <button
+                onClick={() => {
+                  if (isSpeechRecognitionSupported()) {
+                    setVoiceMenuOpen(!voiceMenuOpen);
+                  } else {
+                    setVoiceMode('record');
+                  }
+                }}
+                disabled={!connected}
+                className={clsx(
+                  'w-[34px] h-[34px] rounded-lg flex items-center justify-center flex-shrink-0',
+                  'bg-[rgb(var(--aegis-overlay)/0.03)] border-none',
+                  'text-aegis-text-muted hover:text-aegis-text-muted hover:bg-[rgb(var(--aegis-overlay)/0.07)]',
+                  'transition-colors disabled:opacity-30'
+                )}
+                title={t('input.voiceRecord', 'Voice')}
+              >
+                <Mic size={16} />
+              </button>
+
+              {/* Voice mode picker dropdown */}
+              {voiceMenuOpen && (
+                <div className="absolute bottom-full mb-2 ltr:left-0 rtl:right-0 w-48 rounded-xl border border-aegis-border/20 bg-aegis-bg-solid shadow-float overflow-hidden z-50">
+                  <button
+                    onClick={() => { setVoiceMenuOpen(false); setVoiceMode('stt'); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12px] text-aegis-text hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+                  >
+                    <MessageSquare size={14} className="text-aegis-primary" />
+                    <div className="text-start">
+                      <div className="font-medium">Speech to Text</div>
+                      <div className="text-[10px] text-aegis-text-dim">Real-time · Free · Client-side</div>
+                    </div>
+                  </button>
+                  <div className="mx-2 border-t border-aegis-border/10" />
+                  <button
+                    onClick={() => { setVoiceMenuOpen(false); setVoiceMode('record'); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12px] text-aegis-text hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+                  >
+                    <Mic size={14} className="text-amber-400" />
+                    <div className="text-start">
+                      <div className="font-medium">Voice Recording</div>
+                      <div className="text-[10px] text-aegis-text-dim">Audio file · Server transcription</div>
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* Text Input */}
             <textarea ref={textareaRef} data-input="message" value={text} onChange={(e) => setText(e.target.value)}

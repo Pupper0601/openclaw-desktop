@@ -308,7 +308,8 @@
     "toggleTheme": "Toggle Theme",
     "toggleLanguage": "Switch to Arabic",
     "toggleNotifications": "Toggle Notifications",
-    "searchPlaceholder": "Search commands..."
+    "searchPlaceholder": "Search commands...",
+    "searchBarHint": "Search..."
   },
   "terminal": {
     "title": "Terminal",

@@ -79,6 +79,15 @@ export const gateway = {
   async setSessionThinking(level: string | null, sessionKey = 'agent:main:main') {
     return connection.request('sessions.patch', { key: sessionKey, thinkingLevel: level });
   },
+  async setSessionFast(enabled: boolean, sessionKey = 'agent:main:main') {
+    return connection.request('sessions.patch', { key: sessionKey, fastMode: enabled });
+  },
+  async getAgentIdentity(agentId?: string) {
+    return connection.request('agent.identity.get', agentId ? { agentId } : {});
+  },
+  async resolveExecApproval(id: string, decision: 'allow-once' | 'allow-always' | 'deny') {
+    return connection.request('exec.approvals.resolve', { id, decision });
+  },
   async updateAgentParams(agentId: string, params: Record<string, any>) {
     return connection.request('agents.update', { agentId, params });
   },

@@ -606,7 +606,7 @@ export class GatewayConnection {
   // ── Private: Enable reasoning visibility ──
   private async enableReasoningStream(sessionKey = 'agent:main:main') {
     try {
-      await this.request('sessions.patch', { key: sessionKey, reasoningLevel: 'on' });
+      await this.request('sessions.patch', { key: sessionKey, reasoningLevel: 'stream' });
       console.log('[GW] 🧠 Reasoning visibility enabled');
     } catch (err) {
       console.warn('[GW] Could not enable reasoning:', err);

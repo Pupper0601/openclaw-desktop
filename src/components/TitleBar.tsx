@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useChatStore } from '@/stores/chatStore';
-import { gateway } from '@/services/gateway';
+import { useSettingsStore } from '@/stores/settingsStore';
+import { gateway } from '@/services/gateway/index';
 import { APP_VERSION } from '@/hooks/useAppVersion';
-import { ChevronDown, Check } from 'lucide-react';
+import { ChevronDown, Check, Search, Command, Zap } from 'lucide-react';
 import clsx from 'clsx';
 
 // ═══════════════════════════════════════════════════════════
@@ -427,7 +428,7 @@ function VersionBadge() {
 export function TitleBar() {
   const { t } = useTranslation();
   const [isMaximized, setIsMaximized] = useState(false);
-  const { connected, connecting, tokenUsage, currentModel, currentThinking } = useChatStore();
+  const { connected, connecting, tokenUsage, currentModel, currentThinking, currentFastMode, setCurrentFastMode } = useChatStore();
 
   useEffect(() => {
     window.aegis?.window.isMaximized().then(setIsMaximized);
@@ -469,6 +470,25 @@ export function TitleBar() {
         <ModelPicker currentModel={currentModel} />
         <span className="text-aegis-text-dim opacity-40">·</span>
         <ThinkingPicker currentThinking={currentThinking} />
+        <span className="text-aegis-text-dim opacity-40">·</span>
+        <button
+          onClick={async () => {
+            const next = !currentFastMode;
+            setCurrentFastMode(next);
+            try { await gateway.setSessionFast(next); } catch {}
+          }}
+          title={currentFastMode ? 'Fast Mode: ON — click to disable' : 'Fast Mode: OFF — click to enable'}
+          className={clsx(
+            'no-drag flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] transition-all duration-150',
+            'hover:bg-[rgb(var(--aegis-overlay)/0.06)]',
+            currentFastMode
+              ? 'text-amber-400 bg-amber-400/10'
+              : 'text-aegis-text-muted hover:text-aegis-text-secondary'
+          )}
+        >
+          <Zap size={11} className={currentFastMode ? 'fill-amber-400' : ''} />
+          <span className="font-mono">{currentFastMode ? 'fast' : 'fast'}</span>
+        </button>
         <span className="text-aegis-text-dim">·</span>
         <span>{usedK}K / {maxLabel}</span>
         <span className="text-aegis-text-dim">·</span>
@@ -483,6 +503,23 @@ export function TitleBar() {
           {connected ? 'Connected' : connecting ? 'Connecting...' : 'Disconnected'}
         </span>
         </div>
+      </div>
+
+      {/* ── Center: Search / Command Palette trigger (absolute centered) ── */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <button
+          onClick={() => useSettingsStore.getState().setCommandPaletteOpen(true)}
+          className="no-drag pointer-events-auto flex items-center gap-2 px-3 py-1 rounded-lg
+            bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.08)]
+            text-aegis-text-dim text-[11px] cursor-pointer
+            hover:bg-[rgb(var(--aegis-overlay)/0.08)] hover:border-[rgb(var(--aegis-overlay)/0.15)] transition-colors"
+        >
+          <Search size={12} className="text-aegis-text-dim/50 shrink-0" />
+          <span className="opacity-40 min-w-[60px]">{t('palette.searchBarHint')}</span>
+          <kbd className="flex items-center gap-0.5 text-[9px] text-aegis-text-dim/40 bg-[rgb(var(--aegis-overlay)/0.06)] px-1 py-0.5 rounded border border-[rgb(var(--aegis-overlay)/0.08)]">
+            <Command size={8} />K
+          </kbd>
+        </button>
       </div>
 
       {/* ── Right: Window Controls (Windows style: ─ □ ✕) ── */}

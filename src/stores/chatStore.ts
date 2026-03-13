@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { RenderBlock, ToolBlock } from '@/types/RenderBlock';
 import { parseHistory, parseHistoryMessage } from '@/processing/ContentParser';
 import { useSettingsStore } from './settingsStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 
 // ═══════════════════════════════════════════════════════════
 // Chat Store — Message, Session, Tabs & Usage State
@@ -55,6 +55,7 @@ interface ChatState {
   addMessage: (msg: ChatMessage) => void;
   updateStreamingMessage: (id: string, content: string, extra?: { mediaUrl?: string; mediaType?: string }) => void;
   finalizeStreamingMessage: (id: string, content: string, extra?: { mediaUrl?: string; mediaType?: string }) => void;
+  updateMessageThinking: (id: string, thinkingContent: string) => void;
   setMessages: (msgs: ChatMessage[]) => void;
   clearMessages: () => void;
 
@@ -94,6 +95,19 @@ interface ChatState {
   // Current thinking level (live from gateway session)
   currentThinking: string | null;
   setCurrentThinking: (level: string | null) => void;
+  currentFastMode: boolean;
+  setCurrentFastMode: (enabled: boolean) => void;
+  agentAvatarUrl: string | null;
+  agentName: string | null;
+  setAgentIdentity: (name: string | null, avatarUrl: string | null) => void;
+  fallbackInfo: { from: string; to: string; reason?: string } | null;
+  setFallbackInfo: (info: { from: string; to: string; reason?: string } | null) => void;
+  execApprovals: Array<{ id: string; command: string; cwd?: string; expiresAt: number }>;
+  addExecApproval: (approval: { id: string; command: string; cwd?: string; expiresAt: number }) => void;
+  removeExecApproval: (id: string) => void;
+  pinnedMessages: Array<{ id: string; text: string; pinnedAt: number }>;
+  pinMessage: (id: string, text: string) => void;
+  unpinMessage: (id: string) => void;
 
   // Available models (fetched from gateway models.list)
   availableModels: Array<{ id: string; label: string; alias?: string }>;
@@ -298,6 +312,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // Message not found — this happens when post-tool-call text arrives
       // with a new runId that had no preceding delta events. Create a new message.
       if (content && content.trim()) {
+        // Attach thinking content if available (same as existing-message branch)
+        const thinkingContent = state.thinkingText || undefined;
+
         const newMsg: ChatMessage = {
           id,
           role: 'assistant',
@@ -305,19 +322,58 @@ export const useChatStore = create<ChatState>((set, get) => ({
           timestamp: new Date().toISOString(),
           isStreaming: false,
           ...(extra?.mediaUrl ? { mediaUrl: extra.mediaUrl, mediaType: extra.mediaType } : {}),
+          ...(thinkingContent ? { thinkingContent } : {}),
         };
         const updated = [...state.messages, newMsg];
         return {
           messages: updated,
           renderBlocks: recomputeBlocks(updated),
           isTyping: false,
+          // Clear thinking state after attaching to message
+          thinkingText: '',
+          thinkingRunId: null,
           messagesPerSession: {
             ...state.messagesPerSession,
             [state.activeSessionKey]: updated,
           },
         };
       }
-      return { isTyping: false };
+      // Nothing to display — still clear thinking to prevent leakage
+      return { isTyping: false, thinkingText: '', thinkingRunId: null };
+    });
+  },
+
+  // Post-finalization: attach thinking content to an already-finalized message.
+  // Used when reasoning is fetched from the transcript after the message was displayed.
+  updateMessageThinking: (id, thinkingContent) => {
+    set((state) => {
+      const idx = state.messages.findIndex((m) => m.id === id);
+      if (idx < 0) {
+        // Message not found by exact ID — try the last assistant message
+        const lastIdx = [...state.messages].reverse().findIndex((m) => m.role === 'assistant');
+        if (lastIdx < 0) return {};
+        const actualIdx = state.messages.length - 1 - lastIdx;
+        const updated = [...state.messages];
+        updated[actualIdx] = { ...updated[actualIdx], thinkingContent };
+        return {
+          messages: updated,
+          renderBlocks: recomputeBlocks(updated),
+          messagesPerSession: {
+            ...state.messagesPerSession,
+            [state.activeSessionKey]: updated,
+          },
+        };
+      }
+      const updated = [...state.messages];
+      updated[idx] = { ...updated[idx], thinkingContent };
+      return {
+        messages: updated,
+        renderBlocks: recomputeBlocks(updated),
+        messagesPerSession: {
+          ...state.messagesPerSession,
+          [state.activeSessionKey]: updated,
+        },
+      };
     });
   },
 
@@ -431,6 +487,32 @@ export const useChatStore = create<ChatState>((set, get) => ({
   setManualModelOverride: (model) => set({ manualModelOverride: model, currentModel: model }),
   currentThinking: null,
   setCurrentThinking: (level) => set({ currentThinking: level }),
+  currentFastMode: false,
+  setCurrentFastMode: (enabled) => set({ currentFastMode: enabled }),
+  agentAvatarUrl: null,
+  agentName: null,
+  setAgentIdentity: (name, avatarUrl) => set({ agentName: name, agentAvatarUrl: avatarUrl }),
+  fallbackInfo: null,
+  setFallbackInfo: (info) => set({ fallbackInfo: info }),
+  execApprovals: [],
+  addExecApproval: (approval) => set((s) => ({
+    execApprovals: [...s.execApprovals.filter(a => a.id !== approval.id && a.expiresAt > Date.now()), approval]
+  })),
+  removeExecApproval: (id) => set((s) => ({
+    execApprovals: s.execApprovals.filter(a => a.id !== id)
+  })),
+  pinnedMessages: JSON.parse(localStorage.getItem('aegis-pinned-messages') || '[]'),
+  pinMessage: (id, text) => set((s) => {
+    const preview = text.replace(/[#*`_~>\[\]]/g, '').slice(0, 120);
+    const next = [...s.pinnedMessages.filter(p => p.id !== id), { id, text: preview, pinnedAt: Date.now() }];
+    localStorage.setItem('aegis-pinned-messages', JSON.stringify(next));
+    return { pinnedMessages: next };
+  }),
+  unpinMessage: (id) => set((s) => {
+    const next = s.pinnedMessages.filter(p => p.id !== id);
+    localStorage.setItem('aegis-pinned-messages', JSON.stringify(next));
+    return { pinnedMessages: next };
+  }),
 
   // ── Available Models ──
   availableModels: [],

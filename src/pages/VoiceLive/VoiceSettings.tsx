@@ -24,7 +24,7 @@ import {
 import { GoogleGenAI } from '@google/genai';
 import { useVoiceLiveStore } from '../../stores/voiceLiveStore';
 import { useChatStore } from '../../stores/chatStore';
-import { gateway } from '../../services/gateway';
+import { gateway } from '../../services/gateway/index';
 
 /** Known Gemini voices */
 const GEMINI_VOICES = [

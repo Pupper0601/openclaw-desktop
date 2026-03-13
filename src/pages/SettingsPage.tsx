@@ -15,7 +15,7 @@ import { StatusDot } from '@/components/shared/StatusDot';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStore } from '@/stores/chatStore';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { notifications } from '@/services/notifications';
 import { changeLanguage } from '@/i18n';
 import clsx from 'clsx';
@@ -456,13 +456,16 @@ export function SettingsPageFull() {
         <div className="space-y-2.5">
           {[
             ['Ctrl+K', 'Command Palette'],
+            ['Ctrl+F', 'Search in Chat'],
+            ['Ctrl+Shift+F', 'Focus Mode'],
+            ['/', 'Slash Commands (in input)'],
             ['Ctrl+1-8', t('settingsExtra.navigatePages')],
             ['Ctrl+N', t('settingsExtra.newTab')],
             ['Ctrl+W', t('settingsExtra.closeTab')],
             ['Ctrl+Tab', t('settingsExtra.nextTab')],
             ['Ctrl+,', t('settingsExtra.openSettings')],
             ['Ctrl+R', t('settingsExtra.refresh')],
-            ['Escape', t('settingsExtra.closeModal')],
+            ['Escape', t('settingsExtra.closeModal') + ' / Exit Focus Mode'],
           ].map(([key, desc]) => (
             <div key={key} className="flex items-center justify-between">
               <span className="text-[12px] text-aegis-text-muted">{desc}</span>

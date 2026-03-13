@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { create } from 'zustand';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import type { CalendarEvent, CalendarFilter, CalendarSettings } from '@/pages/Calendar/calendarTypes';
 import { DEFAULT_SETTINGS, DEFAULT_FILTER } from '@/pages/Calendar/calendarTypes';
 import { generateEventId, getLocalTimezone } from '@/pages/Calendar/calendarUtils';

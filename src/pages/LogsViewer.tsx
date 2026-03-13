@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next';
 import { ScrollText, RefreshCw, Loader2, ChevronDown, Pause, Play } from 'lucide-react';
 import { PageTransition } from '@/components/shared/PageTransition';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import clsx from 'clsx';
 
 // ── Types ─────────────────────────────────────────────────

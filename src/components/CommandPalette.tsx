@@ -3,18 +3,22 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  LayoutDashboard, MessageCircle, Kanban, DollarSign, Clock, Bot, Brain,
-  Settings, Wifi, WifiOff, Heart, Mail, Calendar, RefreshCw,
-  Globe, Bell, BellOff, Command
+  FilePlus, RotateCcw, StopCircle, RefreshCw, Layers, Zap, Lightbulb, Eraser,
+  Wifi, WifiOff, Heart, Mail, Calendar,
+  Globe, Bell, BellOff, Command, Maximize, Terminal, BarChart3, Info, Download
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useChatStore } from '@/stores/chatStore';
-import { gateway } from '@/services/gateway';
+import { gateway } from '@/services/gateway/index';
 import { changeLanguage } from '@/i18n';
+
+/** Send a slash command to the gateway via the chat quick-action bridge */
+function sendSlashCommand(cmd: string) {
+  window.dispatchEvent(new CustomEvent('aegis:quick-action', { detail: { message: cmd, autoSend: true } }));
+}
 import clsx from 'clsx';
 
 interface PaletteCommand {
@@ -28,7 +32,6 @@ interface PaletteCommand {
 }
 
 export function CommandPalette() {
-  const navigate = useNavigate();
   const { t } = useTranslation();
   const { commandPaletteOpen, setCommandPaletteOpen, language, setLanguage, notificationsEnabled, setNotificationsEnabled } = useSettingsStore();
   const { connected } = useChatStore();
@@ -36,39 +39,39 @@ export function CommandPalette() {
   const [selectedIdx, setSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Define commands — all names use i18n keys
+  // Define commands
   const commands: PaletteCommand[] = [
-    // Navigation
-    { id: 'nav-dashboard', icon: LayoutDashboard, name: t('nav.dashboard'), shortcut: 'Ctrl+1', keywords: ['dashboard', 'home', 'لوحة'], action: () => navigate('/') },
-    { id: 'nav-chat', icon: MessageCircle, name: t('nav.chat'), shortcut: 'Ctrl+2', keywords: ['chat', 'شات', 'محادثة'], action: () => navigate('/chat') },
-    { id: 'nav-workshop', icon: Kanban, name: t('nav.workshop'), shortcut: 'Ctrl+3', keywords: ['workshop', 'kanban', 'ورشة', 'مهام'], action: () => navigate('/workshop') },
-    { id: 'nav-costs', icon: DollarSign, name: t('nav.costs'), shortcut: 'Ctrl+4', keywords: ['costs', 'تكاليف', 'tokens'], action: () => navigate('/costs') },
-    { id: 'nav-cron', icon: Clock, name: t('nav.cron'), shortcut: 'Ctrl+5', keywords: ['cron', 'schedule', 'جدولة'], action: () => navigate('/cron') },
-    { id: 'nav-agents', icon: Bot, name: t('nav.agents'), shortcut: 'Ctrl+6', keywords: ['agents', 'وكلاء', 'sessions'], action: () => navigate('/agents') },
-    { id: 'nav-memory', icon: Brain, name: t('nav.memory'), shortcut: 'Ctrl+7', keywords: ['memory', 'ذاكرة', 'search'], action: () => navigate('/memory') },
-    { id: 'nav-settings', icon: Settings, name: t('nav.settings'), shortcut: 'Ctrl+,', keywords: ['settings', 'إعدادات'], action: () => navigate('/settings') },
+    // ── OpenClaw Slash Commands ──
+    { id: 'cmd-new', icon: FilePlus, name: '/new — New Session', keywords: ['new', 'جديد', 'جلسة', 'session'], action: () => sendSlashCommand('/new') },
+    { id: 'cmd-reset', icon: RotateCcw, name: '/reset — Reset Session', keywords: ['reset', 'إعادة', 'تعيين', 'ريسيت'], action: () => sendSlashCommand('/reset') },
+    { id: 'cmd-stop', icon: StopCircle, name: '/stop — Stop Generation', keywords: ['stop', 'إيقاف', 'وقف', 'توقف'], action: () => sendSlashCommand('/stop') },
+    { id: 'cmd-compact', icon: RefreshCw, name: '/compact — Compact Context', keywords: ['compact', 'ضغط', 'سياق', 'context'], action: () => sendSlashCommand('/compact') },
+    { id: 'cmd-model', icon: Layers, name: '/model — Change Model', keywords: ['model', 'موديل', 'نموذج', 'تغيير'], action: () => sendSlashCommand('/model') },
+    { id: 'cmd-fast', icon: Zap, name: '/fast — Toggle Fast Mode', keywords: ['fast', 'سريع', 'سرعة', 'speed'], action: () => sendSlashCommand('/fast') },
+    { id: 'cmd-think', icon: Lightbulb, name: '/think — Toggle Thinking', keywords: ['think', 'تفكير', 'thinking', 'reasoning'], action: () => sendSlashCommand('/think') },
+    { id: 'cmd-clear', icon: Eraser, name: '/clear — Clear Display', keywords: ['clear', 'مسح', 'تنظيف', 'شاشة'], action: () => {
+      useChatStore.getState().clearMessages();
+    }},
+    { id: 'cmd-focus', icon: Maximize, name: '/focus — Focus Mode', shortcut: 'Ctrl+Shift+F', keywords: ['focus', 'تركيز', 'fullscreen', 'كامل', 'شاشة'], action: () => {
+      useSettingsStore.getState().toggleFocusMode();
+    }},
+    { id: 'cmd-verbose', icon: Terminal, name: '/verbose — Toggle Verbose', keywords: ['verbose', 'تفصيل', 'مفصل', 'detailed'], action: () => sendSlashCommand('/verbose') },
+    { id: 'cmd-usage', icon: BarChart3, name: '/usage — Token Usage', keywords: ['usage', 'استهلاك', 'توكنز', 'tokens', 'cost'], action: () => sendSlashCommand('/usage') },
+    { id: 'cmd-status', icon: Info, name: '/status — Session Status', keywords: ['status', 'حالة', 'جلسة', 'معلومات'], action: () => sendSlashCommand('/status') },
+    { id: 'cmd-export', icon: Download, name: '/export — Export Chat', keywords: ['export', 'تصدير', 'حفظ', 'markdown'], action: () => sendSlashCommand('/export') },
 
-    // Actions
-    { id: 'act-heartbeat', icon: Heart, name: t('palette.heartbeat'), keywords: ['heartbeat', 'فحص', 'check'], action: () => {
-      window.dispatchEvent(new CustomEvent('aegis:quick-action', { detail: { message: 'Run a quick heartbeat check — emails, calendar, anything urgent?', autoSend: true } }));
-    }},
-    { id: 'act-emails', icon: Mail, name: t('palette.checkEmails'), keywords: ['email', 'إيميل', 'بريد'], action: () => {
-      window.dispatchEvent(new CustomEvent('aegis:quick-action', { detail: { message: 'Check my unread emails and summarize anything important.', autoSend: true } }));
-    }},
-    { id: 'act-calendar', icon: Calendar, name: t('palette.checkCalendar'), keywords: ['calendar', 'تقويم', 'مواعيد'], action: () => {
-      window.dispatchEvent(new CustomEvent('aegis:quick-action', { detail: { message: "What's on my calendar today and tomorrow?", autoSend: true } }));
-    }},
-    { id: 'act-compact', icon: RefreshCw, name: t('palette.compactContext'), keywords: ['compact', 'ضغط', 'context'], action: () => {
-      window.dispatchEvent(new CustomEvent('aegis:quick-action', { detail: { message: 'Compact the main session context', autoSend: true } }));
-    }},
+    // ── Quick Actions ──
+    { id: 'act-heartbeat', icon: Heart, name: t('palette.heartbeat'), keywords: ['heartbeat', 'فحص', 'check'], action: () => sendSlashCommand('Run a quick heartbeat check — emails, calendar, anything urgent?') },
+    { id: 'act-emails', icon: Mail, name: t('palette.checkEmails'), keywords: ['email', 'إيميل', 'بريد'], action: () => sendSlashCommand('Check my unread emails and summarize anything important.') },
+    { id: 'act-calendar', icon: Calendar, name: t('palette.checkCalendar'), keywords: ['calendar', 'تقويم', 'مواعيد'], action: () => sendSlashCommand("What's on my calendar today and tomorrow?") },
 
-    // Connection
+    // ── Connection ──
     { id: 'conn-reconnect', icon: connected ? Wifi : WifiOff, name: connected ? t('palette.reconnect') : t('palette.connectGateway'), keywords: ['connect', 'reconnect', 'اتصال', 'gateway'], action: async () => {
       const config = await window.aegis?.config?.get();
       gateway.connect(config?.gatewayUrl || 'ws://127.0.0.1:18789', config?.gatewayToken || '');
     }},
 
-    // Settings
+    // ── Settings ──
     { id: 'set-lang', icon: Globe, name: t('palette.toggleLanguage'), keywords: ['language', 'لغة', 'english', 'عربي'], action: () => {
       const newLang = language === 'ar' ? 'en' : 'ar';
       setLanguage(newLang);
