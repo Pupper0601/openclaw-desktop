@@ -57,29 +57,101 @@ OpenClaw 强大无比 —— 但通过终端或基本的网页聊天来管理它
 
 ## 📸 截图
 
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <a href="#聊天">
+        <img src="screenshots/chat.gif" width="100%" alt="聊天" />
+      </a>
+      <p align="center"><a href="#聊天">💬 聊天</a></p>
+    </td>
+    <td align="center" width="33%">
+      <a href="#快速回复">
+        <img src="screenshots/quick-replies.gif" width="100%" alt="智能快速回复" />
+      </a>
+      <p align="center"><a href="#快速回复">🔘 智能快速回复</a></p>
+    </td>
+    <td align="center" width="33%">
+      <a href="#技能市场">
+        <img src="screenshots/Skills.gif" width="100%" alt="技能市场" />
+      </a>
+      <p align="center"><a href="#技能市场">🔧 技能市场</a></p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="#集成终端">
+        <img src="screenshots/Terminal.gif" width="100%" alt="集成终端" />
+      </a>
+      <p align="center"><a href="#集成终端">💻 集成终端</a></p>
+    </td>
+    <td align="center" width="33%">
+      <a href="#语音聊天">
+        <img src="screenshots/voice%20chat.gif" width="100%" alt="语音聊天" />
+      </a>
+      <p align="center"><a href="#语音聊天">🎤 语音聊天</a></p>
+    </td>
+    <td align="center" width="33%">
+      <a href="#插件系统">
+        <img src="screenshots/Plugins.gif" width="100%" alt="插件系统" />
+      </a>
+      <p align="center"><a href="#插件系统">🧩 插件系统</a></p>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <a href="#暗色模式">
+        <img src="screenshots/pages-dark.gif" width="100%" alt="暗色模式" />
+      </a>
+      <p align="center"><a href="#暗色模式">🌑 暗色模式</a></p>
+    </td>
+    <td align="center" width="33%">
+      <a href="#亮色模式">
+        <img src="screenshots/pages-light.gif" width="100%" alt="亮色模式" />
+      </a>
+      <p align="center"><a href="#亮色模式">🌕 亮色模式</a></p>
+    </td>
+  </tr>
+</table>
+
+---
+
+<details>
+<summary><strong>📸 点击查看完整截图说明</strong></summary>
+
+<a id="聊天"></a>
 ### 💬 聊天
 ![聊天](screenshots/chat.gif)
 
+<a id="快速回复"></a>
 ### 🔘 智能快速回复按钮
 ![快速回复](screenshots/quick-replies.gif)
 
+<a id="技能市场"></a>
 ### 🔧 技能市场
 ![技能](screenshots/Skills.gif)
 
+<a id="集成终端"></a>
 ### 💻 集成终端
 ![终端](screenshots/Terminal.gif)
 
+<a id="语音聊天"></a>
 ### 🎤 语音聊天
 ![语音聊天](screenshots/voice%20chat.gif)
 
-### 🧩 插件
+<a id="插件系统"></a>
+### 🧩 插件系统
 ![插件](screenshots/Plugins.gif)
 
+<a id="暗色模式"></a>
 ### 🌑 暗色模式
 ![暗色模式](screenshots/pages-dark.gif)
 
+<a id="亮色模式"></a>
 ### 🌕 亮色模式
 ![亮色模式](screenshots/pages-light.gif)
+
+</details>
 
 ---
 
@@ -386,6 +458,38 @@ node scripts/check-translation-sync.js
 
 ---
 
+## 🚀 安装指南
+
+### 下载
+
+从 [Releases](https://github.com/Pupper0601/openclaw-desktop/releases) 下载最新版本的安装包：
+- **Windows**: `AEGIS-Desktop-Setup-x.x.x.exe`
+- **macOS**: `AEGIS-Desktop-x.x.x.dmg`
+
+### 安装后注意事项
+
+由于应用尚未进行代码签名，Windows Defender SmartScreen 可能会显示警告。这是正常现象，可以安全地忽略：
+
+**解决方法：**
+1. 点击警告窗口中的"更多信息"
+2. 点击"仍要运行"
+3. 应用将正常启动
+
+**为什么会有这个警告？**
+- 应用尚未进行数字签名（需要购买商业证书）
+- GitHub Actions 自动构建的版本默认未签名
+- 代码完全开源，你可以检查源代码
+
+### 信任应用
+
+如果你希望以后不再看到此警告，可以：
+1. 右键点击安装文件
+2. 选择"属性"
+3. 勾选"解除锁定"
+4. 点击"确定"
+
+---
+
 ## 🐛 报告问题
 
 如果你发现 Bug 或有功能建议:
@@ -393,6 +497,25 @@ node scripts/check-translation-sync.js
 1. 查看 [Issues](../../issues) 确认问题是否已报告
 2. 如果是新问题,创建一个新的 Issue
 3. 提供详细的问题描述、复现步骤和环境信息
+
+---
+
+## 📦 安装说明
+
+### Windows 用户注意事项
+
+由于 AEGIS Desktop 暂未购买代码签名证书，首次运行时可能会遇到 **Microsoft Defender SmartScreen** 警告。这是正常的，因为 Windows 不信任未签名的应用。
+
+**解决方法：**
+
+1. 点击警告窗口中的 **"更多信息"** 或 **"More info"**
+2. 点击 **"仍要运行"** 或 **"Run anyway"**
+3. 应用即可正常启动
+
+**安全性说明：**
+- 代码完全开源，你可以自行审查源代码
+- 安装包由 GitHub Actions 自动构建，流程透明可查
+- 如有疑虑，建议从官方 Releases 页面下载
 
 ---
 
