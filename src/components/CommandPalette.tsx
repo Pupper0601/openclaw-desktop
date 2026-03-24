@@ -72,8 +72,8 @@ export function CommandPalette() {
     }},
 
     // ── Settings ──
-    { id: 'set-lang', icon: Globe, name: t('palette.toggleLanguage'), keywords: ['language', 'لغة', 'english', 'عربي'], action: () => {
-      const newLang = language === 'ar' ? 'en' : 'ar';
+    { id: 'set-lang', icon: Globe, name: t('palette.toggleLanguage'), keywords: ['language', '语言', 'english', '中文'], action: () => {
+      const newLang = language === 'zh' ? 'en' : 'zh';
       setLanguage(newLang);
       changeLanguage(newLang);
     }},

@@ -276,7 +276,7 @@ export const MessageBubble = memo(function MessageBubble({ block, onResend, onRe
     try {
       const d = new Date(block.timestamp);
       if (isNaN(d.getTime())) return '';
-      const locale = i18n.language?.startsWith('ar') ? 'ar-SA' : 'en-US';
+      const locale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
       return d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
     } catch {
       return '';

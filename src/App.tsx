@@ -255,7 +255,7 @@ export default function App() {
           setGatewayHttpUrl(httpUrl);
           localStorage.setItem('aegis-gateway-http', httpUrl);
           if (!localStorage.getItem('aegis-language') && config.installerLanguage) {
-            const lang = config.installerLanguage as 'ar' | 'en';
+            const lang = config.installerLanguage as 'zh' | 'en';
             changeLanguage(lang);
             useSettingsStore.getState().setLanguage(lang);
           }

@@ -1,0 +1,154 @@
+name: Sync with Upstream
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '0 0 * * 1'  # 每周一 00:00 UTC 运行
+  workflow_run:
+    workflows: ["Sync with Upstream - Check"]
+    types:
+      - requested
+
+jobs:
+  sync:
+    name: Sync Upstream
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 需要推送代码权限
+      pull-requests: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+          git remote add upstream https://github.com/AegisStar/aegis-desktop.git
+
+      - name: Fetch Upstream
+        run: |
+          git fetch upstream
+          echo "✅ Upstream fetched successfully"
+          git log -1 --oneline upstream/master
+
+      - name: Check for Updates
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/master)
+          echo "local_commit=${LOCAL}" >> $GITHUB_OUTPUT
+          echo "upstream_commit=${UPSTREAM}" >> $GITHUB_OUTPUT
+          
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "✅ Already up to date with upstream"
+            echo "status=up_to_date" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            echo "🔄 New updates available"
+            echo "status=has_updates" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+      - name: Merge Upstream Changes
+        if: steps.check.outputs.status == 'has_updates'
+        run: |
+          # 创建同步分支
+          BRANCH_NAME="sync-with-upstream-$(date +'%Y%m%d-%H%M%S')"
+          echo "branch_name=${BRANCH_NAME}" >> $GITHUB_ENV
+          git checkout -b ${BRANCH_NAME}
+          
+          # 合并上游更改
+          if git merge upstream/master -m "Merge upstream/master: Sync with upstream updates"; then
+            echo "✅ Merged successfully"
+          else
+            echo "❌ Merge conflicts detected"
+            echo "⚠️ Please resolve conflicts manually"
+            exit 1
+          fi
+
+      - name: Check Translation Integrity
+        if: steps.check.outputs.status == 'has_updates'
+        run: |
+          # 检查是否有新的英语翻译键
+          node scripts/check-translation-sync.js || {
+            echo "⚠️ Some translation keys are missing in Chinese"
+            echo "Please review and add missing translations"
+            # 不退出,允许继续
+          }
+
+      - name: Verify Chinese Configuration
+        if: steps.check.outputs.status == 'has_updates'
+        run: |
+          # 确保没有阿拉伯语残留
+          if grep -r "ar'" src/i18n.ts src/types/global.d.ts 2>/dev/null; then
+            echo "❌ Arabic references found! This must be fixed manually"
+            exit 1
+          fi
+          
+          # 确保中文语言包存在
+          if [ ! -f "src/locales/zh.json" ]; then
+            echo "❌ Chinese translation file missing!"
+            exit 1
+          fi
+          
+          echo "✅ Chinese configuration verified"
+
+      - name: Push to Branch
+        if: steps.check.outputs.status == 'has_updates'
+        run: |
+          git push origin ${BRANCH_NAME}
+          echo "Pushed branch: ${BRANCH_NAME}"
+
+      - name: Create Pull Request
+        if: steps.check.outputs.status == 'has_updates'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.branch_name }}
+          base: master
+          title: "🔄 Sync with Upstream - $(date +'%Y-%m-%d')"
+          body: |
+            ## 自动同步上游更新
+            
+            ### 变更说明
+            - 从 `upstream/master` 合并了最新更改
+            - 已验证中文配置完整性
+            - 已检查翻译文件同步状态
+            
+            ### 需要手动检查
+            
+            - [ ] 运行 `npm run dev` 测试新功能
+            - [ ] 检查 `scripts/check-translation-sync.js` 输出,添加缺失的中文翻译
+            - [ ] 确认界面显示正常
+            - [ ] 测试语言切换功能
+            
+            ### 下一步
+            如果测试通过,合并此 PR 到 master。
+            
+            ---
+            *此 PR 由 GitHub Actions 自动创建*
+          labels: automated, sync
+          draft: false
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.status }}" = "up_to_date" ]; then
+            echo "## ✅ 已是最新" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "当前分支已与上游保持同步,无需操作。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🎉 同步完成" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- 已创建分支: ${{ env.branch_name }}" >> $GITHUB_STEP_SUMMARY
+            echo "- 已创建 PR 供审查和测试" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 请手动完成" >> $GITHUB_STEP_SUMMARY
+            echo "1. 检查翻译文件中的新键" >> $GITHUB_STEP_SUMMARY
+            echo "2. 运行应用测试新功能" >> $GITHUB_STEP_SUMMARY
+            echo "3. 确认无误后合并 PR" >> $GITHUB_STEP_SUMMARY
+          fi

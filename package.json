@@ -16,7 +16,9 @@
     "build:renderer": "vite build",
     "build": "node scripts/build-electron.js && vite build",
     "package": "npm run build && electron-builder --win",
-    "package:portable": "npm run build && electron-builder --win portable"
+    "package:portable": "npm run build && electron-builder --win portable",
+    "build:all": "node scripts/build.js",
+    "build:all:clean": "node scripts/build.js --clean"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
@@ -62,6 +64,9 @@
     "vite": "^6.0.7",
     "wait-on": "^8.0.3"
   },
+  "resolutions": {
+    "electron": "^35.7.5"
+  },
   "build": {
     "appId": "com.aegis.desktop",
     "productName": "AEGIS Desktop",
@@ -103,7 +108,7 @@
       "include": "installer/nsis-script.nsh",
       "installerLanguages": [
         "en_US",
-        "ar_SA"
+        "zh_CN"
       ]
     },
     "directories": {

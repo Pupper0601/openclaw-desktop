@@ -1,10 +1,10 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
-import ar from './locales/ar.json';
 import en from './locales/en.json';
+import zh from './locales/zh.json';
 
 // ═══════════════════════════════════════════════════════════
-// i18n — Internationalization (Arabic + English)
+// i18n — Internationalization (English + Chinese)
 // ═══════════════════════════════════════════════════════════
 
 // Detect language priority:
@@ -20,20 +20,20 @@ const getInitialLang = (): string => {
 
   // New install or upgrade: installer language takes priority
   // (The NSIS wizard asks the user every time — respect that choice)
-  if (installerLang && (installerLang === 'ar' || installerLang === 'en') && lastVersion !== currentVersion) {
+  if (installerLang && (installerLang === 'zh' || installerLang === 'en') && lastVersion !== currentVersion) {
     localStorage.setItem('aegis-language', installerLang);
     localStorage.setItem('aegis-installed-version', currentVersion);
     return installerLang;
   }
 
   // Normal run: use saved preference
-  if (stored === 'ar' || stored === 'en') {
+  if (stored === 'zh' || stored === 'en') {
     // Sync version marker if missing
     if (!lastVersion && currentVersion) localStorage.setItem('aegis-installed-version', currentVersion);
     return stored;
   }
 
-  // Default: English (user can switch to Arabic from Settings)
+  // Default: English (user can switch to Chinese from Settings)
   localStorage.setItem('aegis-language', 'en');
   if (currentVersion) localStorage.setItem('aegis-installed-version', currentVersion);
   return 'en';
@@ -43,8 +43,8 @@ const savedLang = getInitialLang();
 
 i18n.use(initReactI18next).init({
   resources: {
-    ar: { translation: ar },
     en: { translation: en },
+    zh: { translation: zh },
   },
   lng: savedLang,
   fallbackLng: 'en',
@@ -52,20 +52,20 @@ i18n.use(initReactI18next).init({
 });
 
 // Helper: get direction for current language
-export const getDirection = (lang?: string): 'rtl' | 'ltr' => {
-  return (lang || i18n.language) === 'ar' ? 'rtl' : 'ltr';
+export const getDirection = (): 'rtl' | 'ltr' => {
+  return 'ltr'; // Both English and Chinese use left-to-right
 };
 
 // Helper: change language and persist
 export const changeLanguage = (lang: string) => {
   i18n.changeLanguage(lang);
   localStorage.setItem('aegis-language', lang);
-  document.documentElement.dir = getDirection(lang);
+  document.documentElement.dir = getDirection();
   document.documentElement.lang = lang;
 };
 
 // Set initial direction
-document.documentElement.dir = getDirection(savedLang);
+document.documentElement.dir = getDirection();
 document.documentElement.lang = savedLang;
 
 export default i18n;

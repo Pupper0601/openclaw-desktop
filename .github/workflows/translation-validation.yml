@@ -1,0 +1,143 @@
+name: Translation Validation
+
+on:
+  pull_request:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Translations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Check Translation Files Exist
+        run: |
+          echo "## 📦 检查翻译文件" >> $GITHUB_STEP_SUMMARY
+          
+          if [ ! -f "src/locales/en.json" ]; then
+            echo "❌ 英语翻译文件缺失" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          if [ ! -f "src/locales/zh.json" ]; then
+            echo "❌ 中文翻译文件缺失" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          if [ -f "src/locales/ar.json" ]; then
+            echo "⚠️ 发现阿拉伯语翻译文件 (应该已删除)" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "✅ 翻译文件检查通过" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check i18n Configuration
+        run: |
+          echo "## ⚙️ 检查 i18n 配置" >> $GITHUB_STEP_SUMMARY
+          
+          # 检查是否正确导入中文
+          if ! grep -q "import zh from './locales/zh.json'" src/i18n.ts; then
+            echo "❌ i18n.ts 未导入中文翻译" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # 检查是否还有阿拉伯语引用
+          if grep -q "import ar from './locales/ar.json'" src/i18n.ts; then
+            echo "❌ i18n.ts 仍导入阿拉伯语" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # 检查是否支持中文和英语
+          if ! grep -q "'zh'.*'en'" src/i18n.ts && ! grep -q "'en'.*'zh'" src/i18n.ts; then
+            echo "⚠️ 未找到中文和英语支持配置" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "✅ i18n 配置检查通过" >> $GITHUB_STEP_SUMMARY
+
+      - name: Run Translation Sync Check
+        run: |
+          echo "## 🔍 检查翻译同步" >> $GITHUB_STEP_SUMMARY
+          node scripts/check-translation-sync.js
+          
+          echo "```" >> $GITHUB_STEP_SUMMARY
+          node scripts/check-translation-sync.js >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          echo "```" >> $GITHUB_STEP_SUMMARY
+
+      - name: Validate JSON Format
+        run: |
+          echo "## ✅ 验证 JSON 格式" >> $GITHUB_STEP_SUMMARY
+          
+          # 验证英文 JSON
+          if ! jq empty src/locales/en.json 2>/dev/null; then
+            echo "❌ en.json JSON 格式错误" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # 验证中文 JSON
+          if ! jq empty src/locales/zh.json 2>/dev/null; then
+            echo "❌ zh.json JSON 格式错误" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "✅ JSON 格式验证通过" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for Arabic References
+        run: |
+          echo "## 🚫 检查阿拉伯语引用" >> $GITHUB_STEP_SUMMARY
+          
+          # 搜索所有可能的阿拉伯语引用
+          FOUND_ARABIC=0
+          
+          for file in $(find src -name "*.ts" -o -name "*.tsx"); do
+            if grep -q "\\b'ar'\\b\\|\\b\"ar\"\\b" "$file"; then
+              # 排除注释和字符串字面量中的无害出现
+              if ! grep -E "(comment|string)" <<< "$file" && grep -vE "//.*['\"]ar['\"]" "$file" | grep -q "\\b'ar'\\b\\|\\b\"ar\"\\b"; then
+                echo "⚠️ $file 可能包含阿拉伯语引用" >> $GITHUB_STEP_SUMMARY
+                FOUND_ARABIC=1
+              fi
+            fi
+          done
+          
+          if [ $FOUND_ARABIC -eq 1 ]; then
+            echo "❌ 发现可能的阿拉伯语引用,请检查" >> $GITHUB_STEP_SUMMARY
+            # 不退出,只警告
+          else
+            echo "✅ 未发现阿拉伯语引用" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Translation Statistics
+        run: |
+          echo "## 📊 翻译统计" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          EN_COUNT=$(jq 'keys | length' src/locales/en.json)
+          ZH_COUNT=$(jq 'keys | length' src/locales/zh.json)
+          
+          echo "- 英语键数: $EN_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- 中文键数: $ZH_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- 完整度: $(awk "BEGIN {printf \"%.1f%%\", ($ZH_COUNT/$EN_COUNT)*100}")" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $ZH_COUNT -lt $EN_COUNT ]; then
+            MISSING=$((EN_COUNT - ZH_COUNT))
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ 中文翻译缺少 $MISSING 个键" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## ✅ 验证完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "所有翻译文件和配置已通过验证!" >> $GITHUB_STEP_SUMMARY

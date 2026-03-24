@@ -10,7 +10,7 @@ interface SettingsState {
   sidebarOpen: boolean;
   sidebarWidth: number;
   settingsOpen: boolean;
-  language: 'ar' | 'en';
+  language: 'zh' | 'en';
   notificationsEnabled: boolean;
   soundEnabled: boolean;
   dndMode: boolean;
@@ -33,7 +33,7 @@ interface SettingsState {
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
   setSettingsOpen: (open: boolean) => void;
-  setLanguage: (lang: 'ar' | 'en') => void;
+  setLanguage: (lang: 'zh' | 'en') => void;
   setNotificationsEnabled: (enabled: boolean) => void;
   setSoundEnabled: (enabled: boolean) => void;
   setDndMode: (dnd: boolean) => void;
@@ -63,12 +63,12 @@ const ACCENT_SHADES: Record<string, { 400: string; 500: string; 600: string; raw
 };
 
 // Auto-detect language on first run: check saved → system language → fallback to English
-const detectLang = (): 'ar' | 'en' => {
+const detectLang = (): 'zh' | 'en' => {
   const saved = localStorage.getItem('aegis-language');
-  if (saved === 'ar' || saved === 'en') return saved;
+  if (saved === 'zh' || saved === 'en') return saved;
   // First run — detect from system/browser language
   const sysLang = navigator.language || navigator.languages?.[0] || '';
-  return sysLang.startsWith('ar') ? 'ar' : 'en';
+  return sysLang.startsWith('zh') ? 'zh' : 'en';
 };
 const savedLang = detectLang();
 

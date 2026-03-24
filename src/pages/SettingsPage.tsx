@@ -51,7 +51,7 @@ export function SettingsPageFull() {
   const mainModel = mainSession?.model || '—';
   const contextTokens = mainSession?.contextTokens || 0;
 
-  const handleLanguageChange = (lang: 'ar' | 'en') => {
+  const handleLanguageChange = (lang: 'zh' | 'en') => {
     setLanguage(lang);
     changeLanguage(lang);
   };
@@ -176,15 +176,15 @@ export function SettingsPageFull() {
         </h3>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => handleLanguageChange('ar')}
+            onClick={() => handleLanguageChange('zh')}
             className={clsx(
               'flex-1 py-3 rounded-xl text-[14px] font-medium border transition-colors',
-              language === 'ar'
+              language === 'zh'
                 ? 'bg-aegis-primary/15 border-aegis-primary/30 text-aegis-primary'
                 : 'border-aegis-border/20 text-aegis-text-dim hover:border-aegis-border/40'
             )}
           >
-            العربية
+            中文
           </button>
           <button
             onClick={() => handleLanguageChange('en')}

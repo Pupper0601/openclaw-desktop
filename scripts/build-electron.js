@@ -7,7 +7,8 @@ const root = path.join(__dirname, '..');
 console.log('🔨 Building Electron main process...');
 
 try {
-  execSync('npx tsc -p tsconfig.electron.json', {
+  // 直接使用 tsc 编译
+  execSync('tsc -p tsconfig.electron.json', {
     cwd: root,
     stdio: 'inherit',
   });

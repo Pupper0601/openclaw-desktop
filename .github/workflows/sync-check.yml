@@ -1,0 +1,145 @@
+name: Sync Check Only
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '0 */6 * * *'  # 每 6 小时检查一次
+
+jobs:
+  check:
+    name: Check for Updates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/AegisStar/aegis-desktop.git
+          git fetch upstream
+
+      - name: Compare Branches
+        id: compare
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/master)
+          
+          echo "local_commit=${LOCAL}" >> $GITHUB_OUTPUT
+          echo "upstream_commit=${UPSTREAM}" >> $GITHUB_OUTPUT
+          
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "status=up_to_date" >> $GITHUB_OUTPUT
+            echo "diff_count=0" >> $GITHUB_OUTPUT
+          else
+            echo "status=has_updates" >> $GITHUB_OUTPUT
+            DIFF_COUNT=$(git rev-list --count HEAD..upstream/master)
+            echo "diff_count=${DIFF_COUNT}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Get Changelog
+        if: steps.compare.outputs.status == 'has_updates'
+        run: |
+          echo "## 📝 Upstream Changes" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          git log --oneline HEAD..upstream/master | head -20 >> $GITHUB_STEP_SUMMARY
+
+      - name: Trigger Sync if Updates Available
+        if: steps.compare.outputs.status == 'has_updates'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          event-type: sync-upstream
+          client-payload: |
+            {
+              "upstream_commit": "${{ steps.compare.outputs.upstream_commit }}",
+              "diff_count": "${{ steps.compare.outputs.diff_count }}"
+            }
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.compare.outputs.status }}" = "up_to_date" ]; then
+            echo "## ✅ 检查完成: 已是最新" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "当前分支与上游保持同步" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🔄 发现新更新" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- 上游提交数: ${{ steps.compare.outputs.diff_count }}" >> $GITHUB_STEP_SUMMARY
+            echo "- 上游最新: \`${{ steps.compare.outputs.upstream_commit }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "已触发同步流程,请等待..." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Create Issue if Manual Review Needed
+        if: steps.compare.outputs.status == 'has_updates'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const diffCount = '${{ steps.compare.outputs.diff_count }}';
+            const upstreamCommit = '${{ steps.compare.outputs.upstream_commit }}';
+            
+            // 创建或更新 issue
+            const title = `⚠️ Upstream Update Available (${diffCount} commits)`;
+            const body = `
+            ## Upstream 检测到更新
+            
+            ### 统计信息
+            - **提交数**: ${diffCount}
+            - **上游最新**: \`${upstreamCommit}\`
+            
+            ### 如何操作
+            
+            **方式 1: 自动同步 (推荐)**
+            \`\`\`bash
+            # 在 GitHub Actions 页面手动触发 "Sync with Upstream" workflow
+            \`\`\`
+            
+            **方式 2: 手动同步**
+            \`\`\`bash
+            git fetch upstream
+            git merge upstream/master
+            # 解决冲突
+            node scripts/check-translation-sync.js
+            \`\`\`
+            
+            **方式 3: 查看 PR**
+            如果自动同步已创建 PR,请在 PR 中审查变更。
+            
+            ---
+            *此 issue 由 GitHub Actions 自动创建*
+            `;
+            
+            // 检查是否已有类似 issue
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: ['sync-alert']
+            });
+            
+            const existingIssue = issues.data.find(i => i.title.includes('Upstream Update Available'));
+            
+            if (existingIssue) {
+              // 更新已有 issue
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: body
+              });
+              console.log(`Updated existing issue #${existingIssue.number}`);
+            } else {
+              // 创建新 issue
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['sync-alert']
+              });
+              console.log('Created new issue');
+            }

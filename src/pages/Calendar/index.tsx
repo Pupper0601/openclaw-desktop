@@ -21,7 +21,7 @@ import type { CalendarEvent } from './calendarTypes';
 export default function CalendarPage() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language || 'en';
-  const isRtl = i18n.dir() === 'rtl' || locale.startsWith('ar');
+  const isRtl = false; // Both English and Chinese use left-to-right
 
   const {
     events, loading, error, selectedDate, view,
