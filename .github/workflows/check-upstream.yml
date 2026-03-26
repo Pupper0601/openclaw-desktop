@@ -1,0 +1,67 @@
+name: 检查上游更新
+
+on:
+  workflow_dispatch:  # 手动触发
+  schedule:
+    - cron: '0 */12 * * *'  # 每12小时运行一次（UTC时间）
+
+jobs:
+  check:
+    name: 检查上游更新
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 添加上游远程仓库
+        run: |
+          git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop.git || true
+          git fetch upstream
+
+      - name: 检查是否有更新
+        id: check
+        run: |
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/master)
+          
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "✅ 已经是最新版本"
+            echo "status=up_to_date" >> $GITHUB_OUTPUT
+          else
+            echo "🔄 发现上游有新更新"
+            echo "status=has_updates" >> $GITHUB_OUTPUT
+            echo "local_commit=$LOCAL" >> $GITHUB_OUTPUT
+            echo "upstream_commit=$UPSTREAM" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 触发同步工作流
+        if: steps.check.outputs.status == 'has_updates'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: upstream-updates-available
+          client-payload: |
+            {
+              "local_commit": "${{ steps.check.outputs.local_commit }}",
+              "upstream_commit": "${{ steps.check.outputs.upstream_commit }}"
+            }
+
+      - name: 总结
+        run: |
+          if [ "${{ steps.check.outputs.status }}" = "up_to_date" ]; then
+            echo "## ✅ 已是最新" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "当前分支已与上游保持同步，无需操作。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## 🔄 发现上游更新" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "本地提交: \`${{ steps.check.outputs.local_commit }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "上游提交: \`${{ steps.check.outputs.upstream_commit }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "已触发同步工作流。" >> $GITHUB_STEP_SUMMARY
+          fi

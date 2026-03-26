@@ -1,0 +1,103 @@
+name: 同步与合并
+
+on:
+  repository_dispatch:
+    types: [upstream-updates-available]
+
+jobs:
+  sync:
+    name: 同步上游更新
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 配置Git用户
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+
+      - name: 添加上游远程仓库
+        run: |
+          git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop.git || true
+          git fetch upstream
+
+      - name: 尝试合并上游更新
+        id: merge
+        run: |
+          # 检查是否已经是最新
+          git fetch upstream
+          LOCAL=$(git rev-parse HEAD)
+          UPSTREAM=$(git rev-parse upstream/master)
+          
+          if [ "$LOCAL" = "$UPSTREAM" ]; then
+            echo "✅ 已经是最新版本，无需合并"
+            echo "status=already_uptodate" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          # 尝试合并 upstream/master 到当前分支
+          git merge --no-commit --no-ff upstream/master
+          if [ $? -eq 0 ]; then
+            echo "✅ 自动合并成功"
+            echo "status=success" >> $GITHUB_OUTPUT
+            git commit -m "Merge upstream updates"
+            git push origin HEAD
+          else
+            echo "🔄 自动合并失败，存在冲突，需要人工确认"
+            echo "status=failed" >> $GITHUB_OUTPUT
+            git merge --abort
+          fi
+
+      - name: 触发构建工作流（合并成功时）
+        if: steps.merge.outputs.status == 'success'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          event-type: build-trigger
+          client-payload: |
+            {
+              "merge_status": "success",
+              "triggered_by": "sync-and-merge"
+            }
+
+      - name: 创建PR（合并失败时）
+        if: steps.merge.outputs.status == 'failed'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "尝试合并上游更新（存在冲突）"
+          title: "上游更新合并请求"
+          body: |
+            检测到上游仓库有更新，但自动合并时遇到冲突，需要人工确认。
+
+            **上游提交**: ${{ github.event.client_payload.upstream_commit }}
+            **本地提交**: ${{ github.event.client_payload.local_commit }}
+
+            请检查并解决冲突后合并此PR。
+          branch: merge-upstream-updates
+          base: master
+          labels: "upstream,merge,conflict"
+
+      - name: 总结
+        run: |
+          echo "## 同步结果" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.merge.outputs.status }}" = "success" ]; then
+            echo "### ✅ 自动合并成功" >> $GITHUB_STEP_SUMMARY
+            echo "已成功将上游更新合并到当前分支，并触发了构建工作流。" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.merge.outputs.status }}" = "already_uptodate" ]; then
+            echo "### ✅ 已经是最新版本" >> $GITHUB_STEP_SUMMARY
+            echo "当前分支已与上游保持同步，无需操作。" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 🔄 需要人工确认" >> $GITHUB_STEP_SUMMARY
+            echo "自动合并遇到冲突，已创建PR等待人工确认。" >> $GITHUB_STEP_SUMMARY
+            echo "请查看并解决冲突后合并PR，构建将自动进行。" >> $GITHUB_STEP_SUMMARY
+          fi
