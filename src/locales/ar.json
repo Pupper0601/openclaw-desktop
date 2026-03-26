@@ -28,7 +28,8 @@
     "terminal": "الطرفية",
     "notifications": "الإشعارات",
     "calendar": "التقويم",
-    "voiceLive": "محادثة صوتية"
+    "voiceLive": "محادثة صوتية",
+    "sessions": "الجلسات"
   },
   "skills": {
     "title": "المهارات",
@@ -291,12 +292,18 @@
     "retrying": "جاري محاولة إعادة الاتصال..."
   },
   "notifications": {
-    "newMessage": "رسالة جديدة",
-    "replyComplete": "اكتمل الرد",
-    "connected": "متصل",
-    "connectedBody": "تم الاتصال بالـ Gateway بنجاح",
-    "paired": "تم الربط",
-    "pairedBody": "تم ربط AEGIS Desktop بالـ Gateway بنجاح"
+    "title": "الإشعارات",
+    "unread": "غير مقروءة",
+    "markAllRead": "قراءة الكل",
+    "clear": "مسح",
+    "empty": "لا توجد إشعارات",
+    "filter": {
+      "all": "الكل",
+      "error": "أخطاء",
+      "approval": "موافقات",
+      "cron": "مهام",
+      "system": "النظام"
+    }
   },
   "token": {
     "lastUpdate": "آخر تحديث",
@@ -884,5 +891,12 @@
     "hintListening": "تكلّم...",
     "hintUnmute": "اضغط لفتح المايك",
     "interrupt": "اضغط للمقاطعة"
+  },
+  "execApproval": {
+    "title": "⚡ يتطلب موافقة على التنفيذ",
+    "in": "في",
+    "allowOnce": "سماح مرة",
+    "allowAlways": "سماح دائم",
+    "deny": "رفض"
   }
 }

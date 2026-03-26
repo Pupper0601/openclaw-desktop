@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, RefreshCw, Loader2, Zap, Clock, ChevronRight, MessageSquare } from 'lucide-react';
+import { Bot, RefreshCw, Loader2, Zap, Clock, ChevronRight, MessageSquare, Send, XCircle } from 'lucide-react';
 import { PageTransition } from '@/components/shared/PageTransition';
 import { useGatewayDataStore } from '@/stores/gatewayDataStore';
 import { formatTokens } from '@/utils/format';
@@ -495,6 +495,11 @@ export function MultiAgentViewPage() {
                   )}
                 </div>
 
+                {/* ── Actions: Steer + Kill ── */}
+                {isSelectedRunning && selectedKey && (
+                  <SubAgentActions sessionKey={selectedKey} />
+                )}
+
                 {/* ── Message history ── */}
                 <div className="flex-1 overflow-y-auto">
                   {loadingHistory ? (
@@ -524,6 +529,92 @@ export function MultiAgentViewPage() {
         </div>
       )}
     </PageTransition>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// SubAgentActions — Steer (send message) + Kill
+// ═══════════════════════════════════════════════════════════
+
+function SubAgentActions({ sessionKey }: { sessionKey: string }) {
+  const { t } = useTranslation();
+  const [steerMsg, setSteerMsg] = useState('');
+  const [steerLoading, setSteerLoading] = useState(false);
+  const [killLoading, setKillLoading] = useState(false);
+  const [killConfirm, setKillConfirm] = useState(false);
+
+  const handleSteer = async () => {
+    if (!steerMsg.trim()) return;
+    setSteerLoading(true);
+    try {
+      await gateway.call('sessions.send', { sessionKey, message: steerMsg.trim() });
+      setSteerMsg('');
+    } catch (e: any) {
+      console.error('[MultiAgent] Steer failed:', e);
+    }
+    setSteerLoading(false);
+  };
+
+  const handleKill = async () => {
+    setKillLoading(true);
+    try {
+      await gateway.call('sessions.kill', { sessionKey });
+    } catch (e: any) {
+      console.error('[MultiAgent] Kill failed:', e);
+    }
+    setKillLoading(false);
+    setKillConfirm(false);
+  };
+
+  return (
+    <div className="px-4 py-2 border-b border-[rgb(var(--aegis-overlay)/0.06)] space-y-2">
+      {/* Steer: send message to sub-agent */}
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={steerMsg}
+          onChange={(e) => setSteerMsg(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSteer()}
+          placeholder={t('multiAgent.steerPlaceholder', 'Send instruction to sub-agent...')}
+          className="flex-1 px-3 py-1.5 rounded-lg text-[11px] bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text placeholder:text-aegis-text-dim/40 outline-none focus:border-aegis-primary/30"
+        />
+        <button
+          onClick={handleSteer}
+          disabled={!steerMsg.trim() || steerLoading}
+          className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[10px] font-medium text-aegis-primary bg-aegis-primary/10 border border-aegis-primary/20 hover:bg-aegis-primary/15 disabled:opacity-30 transition-colors"
+        >
+          {steerLoading ? <Loader2 size={10} className="animate-spin" /> : <Send size={10} />}
+          Steer
+        </button>
+      </div>
+
+      {/* Kill */}
+      {!killConfirm ? (
+        <button
+          onClick={() => setKillConfirm(true)}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-medium text-red-400 bg-red-500/5 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+        >
+          <XCircle size={10} /> Kill Sub-agent
+        </button>
+      ) : (
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-red-400">Kill this sub-agent?</span>
+          <button
+            onClick={handleKill}
+            disabled={killLoading}
+            className="px-2.5 py-1 rounded-md text-[10px] font-medium text-white bg-red-500/80 hover:bg-red-500 transition-colors"
+          >
+            {killLoading ? <Loader2 size={10} className="animate-spin" /> : 'Confirm Kill'}
+          </button>
+          <button
+            onClick={() => setKillConfirm(false)}
+            className="px-2.5 py-1 rounded-md text-[10px] text-aegis-text-muted bg-[rgb(var(--aegis-overlay)/0.04)] hover:bg-[rgb(var(--aegis-overlay)/0.08)]"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 

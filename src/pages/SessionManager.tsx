@@ -1,385 +1,487 @@
 // ═══════════════════════════════════════════════════════════
-// Session Manager — Live session monitoring & overview
-// Header + filter bar + 2-column session cards grid
+// Session Manager — Full session monitoring, search, actions
+// Header + search + filter tabs + 2-col session cards + preview drawer
 // ═══════════════════════════════════════════════════════════
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, RefreshCw, Loader2, Zap, Clock, Bot, Activity } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import {
+  Users, RefreshCw, Loader2, Search, Trash2, RotateCcw,
+  Eye, X, Bot, Clock, HardDrive, MessageSquare,
+} from 'lucide-react';
 import { PageTransition } from '@/components/shared/PageTransition';
 import { useGatewayDataStore, refreshGroup } from '@/stores/gatewayDataStore';
+import { gateway } from '@/services/gateway/index';
+import { useNotificationStore } from '@/stores/notificationStore';
 import { formatTokens } from '@/utils/format';
 import type { SessionInfo } from '@/stores/gatewayDataStore';
 import clsx from 'clsx';
 
 // ═══════════════════════════════════════════════════════════
-// Helpers
+// Types & Helpers
 // ═══════════════════════════════════════════════════════════
 
-/** Format a session key into a human-readable name.
- *  agent:main:main          → "Main"
- *  agent:core:subagent:uuid → "Core → Sub-agent"
- *  anything else            → original key (truncated)
- */
-function formatSessionKey(key: string): string {
-  if (!key.startsWith('agent:')) return key.length > 32 ? key.substring(0, 32) + '…' : key;
+type SessionType = 'dm' | 'cron' | 'subagent' | 'group' | 'voice' | 'other';
+type FilterKey = 'all' | 'dm' | 'cron' | 'subagent' | 'group';
 
-  const parts = key.split(':'); // ['agent', agentId, ...rest]
-  if (parts.length < 3) return key;
-
-  const agentId = parts[1];
-  const agentName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
-
-  const restParts = parts.slice(2);
-  const isSubAgent = restParts.includes('subagent');
-
-  if (isSubAgent) {
-    return `${agentName} → Sub-agent`;
-  }
-
-  // e.g. agent:main:main → "Main"
-  const sessionName = restParts[0];
-  if (sessionName && sessionName !== agentId) {
-    return sessionName.charAt(0).toUpperCase() + sessionName.slice(1);
-  }
-  return agentName;
+function classifySession(key: string): SessionType {
+  if (/:cron:/.test(key)) return 'cron';
+  if (/:subagent:/.test(key)) return 'subagent';
+  if (/:voice/.test(key)) return 'voice';
+  if (/:group:/.test(key) || /:discord:/.test(key) || /:telegram:.*:g/.test(key)) return 'group';
+  return 'dm';
 }
 
-/** Relative time — e.g. "2m ago", "1h ago", "just now" */
-function formatTimeAgo(ts: string | undefined | null): string {
+function sessionLabel(s: SessionInfo): string {
+  const key = s.key || '';
+  if (s.label || s.displayName) return (s.label || s.displayName || '').slice(0, 40);
+  if (key === 'agent:main:main') return 'Main';
+  const parts = key.split(':');
+  if (parts.length >= 3) {
+    if (parts[2] === 'subagent') {
+      const agentId = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+      const uuid = (parts[3] || '').replace(/-/g, '').substring(0, 6);
+      return `${agentId} · ${uuid}`;
+    }
+    return parts.slice(2).join(':').substring(0, 30);
+  }
+  return key.substring(0, 30);
+}
+
+function sessionIcon(type: SessionType): string {
+  switch (type) {
+    case 'dm': return '💬';
+    case 'cron': return '⏰';
+    case 'subagent': return '🔧';
+    case 'group': return '👥';
+    case 'voice': return '🎤';
+    default: return '📄';
+  }
+}
+
+function badgeClass(type: SessionType): string {
+  switch (type) {
+    case 'dm': return 'bg-blue-500/15 text-blue-400';
+    case 'cron': return 'bg-purple-500/15 text-purple-400';
+    case 'subagent': return 'bg-amber-500/15 text-amber-400';
+    case 'group': return 'bg-emerald-500/15 text-emerald-400';
+    case 'voice': return 'bg-pink-500/15 text-pink-400';
+    default: return 'bg-zinc-500/15 text-zinc-400';
+  }
+}
+
+function timeAgo(ts: string | undefined | null): string {
   if (!ts) return '—';
   try {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return '—';
-    const diff = Date.now() - d.getTime();
-    if (diff < 0) return 'just now';
-    if (diff < 60_000) return 'just now';
+    const diff = Date.now() - new Date(ts).getTime();
+    if (diff < 0 || diff < 60_000) return 'just now';
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
     return `${Math.floor(diff / 86_400_000)}d ago`;
-  } catch {
-    return '—';
-  }
+  } catch { return '—'; }
 }
 
-/** Token usage percentage (0–100), capped */
-function tokenPercent(context?: number, max?: number): number {
-  if (!context || !max || max === 0) return 0;
-  return Math.min(100, Math.round((context / max) * 100));
+function tokenPercent(ctx?: number, max?: number): number {
+  if (!ctx || !max || max === 0) return 0;
+  return Math.min(100, Math.round((ctx / max) * 100));
 }
 
-/** Colour of the token bar based on fill level */
 function tokenBarColor(pct: number): string {
-  if (pct >= 90) return 'bg-aegis-danger/70';
-  if (pct >= 70) return 'bg-aegis-warning/70';
+  if (pct >= 80) return 'bg-red-500/70';
+  if (pct >= 50) return 'bg-amber-500/70';
   return 'bg-aegis-primary/60';
 }
 
-/** Format tokens — wraps central formatTokens with null handling */
 const fmtTokens = (n?: number): string => n == null ? '—' : formatTokens(n);
 
 // ═══════════════════════════════════════════════════════════
-// Filter types
+// Preview Drawer
 // ═══════════════════════════════════════════════════════════
 
-type FilterType = 'all' | 'running' | 'idle' | 'subagent';
+function PreviewDrawer({ session, onClose }: { session: SessionInfo | null; onClose: () => void }) {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
 
-const FILTERS: { id: FilterType; labelKey: string; fallback: string }[] = [
-  { id: 'all',      labelKey: 'sessions.filterAll',      fallback: 'All'        },
-  { id: 'running',  labelKey: 'sessions.filterRunning',  fallback: 'Running'    },
-  { id: 'idle',     labelKey: 'sessions.filterIdle',     fallback: 'Idle'       },
-  { id: 'subagent', labelKey: 'sessions.filterSubagent', fallback: 'Sub-agents' },
-];
+  // Fetch messages when session changes
+  useState(() => {
+    if (!session) return;
+    setLoading(true);
+    gateway.getHistory(session.key, 10)
+      .then((res: any) => {
+        const msgs = Array.isArray(res?.messages) ? res.messages : Array.isArray(res) ? res : [];
+        setMessages(msgs.slice(-10));
+      })
+      .catch(() => setMessages([]))
+      .finally(() => setLoading(false));
+  });
 
-// ═══════════════════════════════════════════════════════════
-// SessionCard
-// ═══════════════════════════════════════════════════════════
-
-interface SessionCardProps {
-  session: SessionInfo;
-}
-
-function SessionCard({ session }: SessionCardProps) {
-  const isRunning = session.running === true;
-  const isSubAgent = session.key.includes(':subagent:');
-  const pct = tokenPercent(session.contextTokens, session.maxTokens);
-
-  const displayName = session.label || formatSessionKey(session.key);
-  const isAgentKey  = session.key.startsWith('agent:');
+  if (!session) return null;
 
   return (
-    <div
-      className={clsx(
-        'flex flex-col gap-3 p-4 rounded-2xl border transition-all',
-        'bg-[rgb(var(--aegis-overlay)/0.02)] hover:bg-[rgb(var(--aegis-overlay)/0.035)]',
-        isRunning
-          ? 'border-aegis-primary/20 hover:border-aegis-primary/30'
-          : 'border-[rgb(var(--aegis-overlay)/0.07)] hover:border-[rgb(var(--aegis-overlay)/0.12)]',
-      )}
-    >
-      {/* ── Row 1: name + status badge ── */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Icon */}
-          <div
-            className={clsx(
-              'shrink-0 w-8 h-8 rounded-[10px] flex items-center justify-center border',
-              isSubAgent
-                ? 'bg-aegis-accent/10 border-aegis-accent/20'
-                : 'bg-aegis-primary/10 border-aegis-primary/20',
-            )}
-          >
-            {isSubAgent ? (
-              <Zap size={14} className="text-aegis-accent" />
-            ) : (
-              <Bot size={14} className="text-aegis-primary" />
-            )}
-          </div>
-
-          {/* Name */}
-          <div className="min-w-0">
-            <div className="text-[13px] font-bold truncate leading-tight">
-              {displayName}
-            </div>
-            {/* Show formatted key underneath when label exists OR when key is agent-style */}
-            {isAgentKey && (
-              <div className="text-[9px] font-mono text-aegis-text-dim truncate leading-tight mt-0.5">
-                {session.key.length > 40 ? session.key.substring(0, 40) + '…' : session.key}
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/40 z-[90]" onClick={onClose}
+      />
+      <motion.div
+        initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+        transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+        className="fixed top-0 right-0 w-[400px] h-full z-[100] bg-aegis-elevated-solid border-l border-aegis-border flex flex-col shadow-2xl"
+      >
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-aegis-border">
+          <span className="text-[14px] font-semibold text-aegis-text">
+            📋 {sessionLabel(session)} — Last Messages
+          </span>
+          <button onClick={onClose} className="p-1 rounded-md text-aegis-text-dim hover:text-aegis-text-secondary hover:bg-[rgb(var(--aegis-overlay)/0.06)]">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          {loading ? (
+            <div className="flex items-center justify-center h-32"><Loader2 className="w-5 h-5 animate-spin text-aegis-primary/50" /></div>
+          ) : messages.length === 0 ? (
+            <div className="text-center text-aegis-text-dim text-[12px] mt-8">No messages</div>
+          ) : messages.map((m: any, i: number) => {
+            const role = m.role || 'unknown';
+            const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content || '');
+            const isUser = role === 'user';
+            return (
+              <div key={i} className={clsx(
+                'px-3 py-2.5 rounded-lg text-[12px] leading-relaxed',
+                isUser ? 'bg-aegis-primary/8 ml-10' : 'bg-[rgb(var(--aegis-overlay)/0.03)] mr-10',
+              )}>
+                <div className="text-[10px] font-semibold text-aegis-text-dim mb-1">
+                  {isUser ? 'You' : role.charAt(0).toUpperCase() + role.slice(1)}
+                </div>
+                <div className="text-aegis-text-muted line-clamp-4">{content.substring(0, 300)}</div>
               </div>
-            )}
-          </div>
+            );
+          })}
         </div>
-
-        {/* Status pill */}
-        <div
-          className={clsx(
-            'shrink-0 flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-[0.5px] border',
-            isRunning
-              ? 'bg-aegis-success-surface border-emerald-500/20 text-aegis-success'
-              : 'bg-[rgb(var(--aegis-overlay)/0.03)] border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text-dim',
-          )}
-        >
-          <span
-            className={clsx(
-              'w-[6px] h-[6px] rounded-full',
-              isRunning ? 'bg-aegis-success' : 'bg-[rgb(var(--aegis-overlay)/0.25)]',
-            )}
-            style={isRunning ? { animation: 'mc-dot-ping 2s ease-in-out infinite' } : undefined}
-          />
-          {isRunning ? 'Running' : 'Idle'}
-        </div>
-      </div>
-
-      {/* ── Row 2: model badge + compactions ── */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {session.model && (
-          <span className="text-[9px] font-mono px-2 py-0.5 rounded-md bg-aegis-primary/[0.06] border border-aegis-primary/10 text-aegis-primary/70">
-            {session.model}
-          </span>
-        )}
-
-        {session.kind && (
-          <span className="text-[9px] px-2 py-0.5 rounded-md bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.06)] text-aegis-text-dim">
-            {session.kind}
-          </span>
-        )}
-
-        {(session.compactions ?? 0) > 0 && (
-          <span className="flex items-center gap-0.5 text-[9px] text-aegis-warning/70 bg-aegis-warning/[0.06] border border-aegis-warning/10 px-2 py-0.5 rounded-md">
-            <Zap size={9} />
-            {session.compactions}
-          </span>
-        )}
-      </div>
-
-      {/* ── Row 3: token usage bar ── */}
-      {session.maxTokens ? (
-        <div className="space-y-1">
-          <div className="flex items-center justify-between text-[9px] text-aegis-text-dim">
-            <span className="flex items-center gap-1">
-              <Activity size={9} />
-              Context
-            </span>
-            <span className="font-mono">
-              {fmtTokens(session.contextTokens)} / {fmtTokens(session.maxTokens)}
-              <span className="ms-1 opacity-60">({pct}%)</span>
-            </span>
-          </div>
-          <div className="h-1 w-full rounded-full bg-[rgb(var(--aegis-overlay)/0.06)] overflow-hidden">
-            <div
-              className={clsx('h-full rounded-full transition-all', tokenBarColor(pct))}
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-        </div>
-      ) : session.contextTokens ? (
-        <div className="text-[9px] text-aegis-text-dim flex items-center gap-1">
-          <Activity size={9} />
-          <span className="font-mono">{fmtTokens(session.contextTokens)} tokens used</span>
-        </div>
-      ) : null}
-
-      {/* ── Row 4: last active ── */}
-      <div className="flex items-center gap-1 text-[9px] text-aegis-text-dim">
-        <Clock size={9} className="shrink-0" />
-        <span>{formatTimeAgo(session.lastActive)}</span>
-        {session.totalTokens != null && (
-          <>
-            <span className="mx-1 opacity-30">·</span>
-            <span className="font-mono">{fmtTokens(session.totalTokens)} total</span>
-          </>
-        )}
-      </div>
-    </div>
+      </motion.div>
+    </>
   );
 }
 
 // ═══════════════════════════════════════════════════════════
-// SessionManagerPage
+// Confirm Dialog
+// ═══════════════════════════════════════════════════════════
+
+function ConfirmDialog({ title, message, onConfirm, onCancel, danger }: {
+  title: string; message: string; onConfirm: () => void; onCancel: () => void; danger?: boolean;
+}) {
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-[110]" onClick={onCancel} />
+      <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[120] w-[360px] bg-aegis-elevated-solid border border-aegis-border rounded-xl p-5 shadow-2xl">
+        <div className="text-[14px] font-semibold text-aegis-text mb-2">{title}</div>
+        <div className="text-[12px] text-aegis-text-muted mb-4">{message}</div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className="px-3 py-1.5 rounded-lg text-[11px] text-aegis-text-muted bg-[rgb(var(--aegis-overlay)/0.04)] border border-aegis-border hover:bg-[rgb(var(--aegis-overlay)/0.08)]">
+            Cancel
+          </button>
+          <button onClick={onConfirm} className={clsx(
+            'px-3 py-1.5 rounded-lg text-[11px] font-medium border',
+            danger ? 'bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20' : 'bg-aegis-primary/10 text-aegis-primary border-aegis-primary/20 hover:bg-aegis-primary/20'
+          )}>
+            Confirm
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+// Main Component
 // ═══════════════════════════════════════════════════════════
 
 export function SessionManagerPage() {
   const { t } = useTranslation();
-  const [filter, setFilter] = useState<FilterType>('all');
-
-  // ── Store ──
   const sessions = useGatewayDataStore((s) => s.sessions);
-  const loading   = useGatewayDataStore((s) => s.loading.sessions);
+  const loading = useGatewayDataStore((s) => s.loading.sessions);
 
-  // ── Filtered list ──
-  const filtered = useMemo<SessionInfo[]>(() => {
-    switch (filter) {
-      case 'running':
-        return sessions.filter((s) => s.running === true);
-      case 'idle':
-        return sessions.filter((s) => s.running !== true);
-      case 'subagent':
-        return sessions.filter((s) => s.key.includes(':subagent:'));
-      default:
-        return sessions;
+  const [filter, setFilter] = useState<FilterKey>('all');
+  const [search, setSearch] = useState('');
+  const [previewSession, setPreviewSession] = useState<SessionInfo | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ type: 'reset' | 'delete' | 'cleanup'; session?: SessionInfo } | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Classify and filter
+  const classified = useMemo(() =>
+    sessions.map((s) => ({ ...s, _type: classifySession(s.key) })),
+    [sessions]
+  );
+
+  const filtered = useMemo(() => {
+    let list = classified;
+    if (filter !== 'all') list = list.filter((s) => s._type === filter);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter((s) =>
+        (s.key || '').toLowerCase().includes(q) ||
+        (s.label || '').toLowerCase().includes(q) ||
+        (s.displayName || '').toLowerCase().includes(q)
+      );
     }
-  }, [sessions, filter]);
+    return list.sort((a, b) => {
+      const ta = new Date(a.updatedAt || a.lastActive || 0).getTime();
+      const tb = new Date(b.updatedAt || b.lastActive || 0).getTime();
+      return tb - ta;
+    });
+  }, [classified, filter, search]);
 
-  // ── Counts for filter badges ──
+  // Counts
   const counts = useMemo(() => ({
-    all:      sessions.length,
-    running:  sessions.filter((s) => s.running === true).length,
-    idle:     sessions.filter((s) => s.running !== true).length,
-    subagent: sessions.filter((s) => s.key.includes(':subagent:')).length,
-  }), [sessions]);
+    all: sessions.length,
+    dm: classified.filter((s) => s._type === 'dm').length,
+    cron: classified.filter((s) => s._type === 'cron').length,
+    subagent: classified.filter((s) => s._type === 'subagent').length,
+    group: classified.filter((s) => s._type === 'group').length,
+  }), [sessions, classified]);
 
-  // ═══ RENDER ═══
+  // Actions
+  const handleReset = useCallback(async (s: SessionInfo) => {
+    setActionLoading(s.key);
+    try {
+      await gateway.resetSession(s.key);
+      useNotificationStore.getState().addNotification({
+        category: 'system', severity: 'success',
+        title: 'Session Reset', body: sessionLabel(s),
+      });
+      refreshGroup('sessions');
+    } catch (e: any) {
+      useNotificationStore.getState().addNotification({
+        category: 'error', severity: 'error',
+        title: 'Reset Failed', body: e?.message || 'Unknown error',
+      });
+    }
+    setActionLoading(null);
+    setConfirmAction(null);
+  }, []);
+
+  const handleDelete = useCallback(async (s: SessionInfo) => {
+    setActionLoading(s.key);
+    try {
+      await gateway.deleteSession(s.key);
+      useNotificationStore.getState().addNotification({
+        category: 'system', severity: 'success',
+        title: 'Session Deleted', body: sessionLabel(s),
+      });
+      refreshGroup('sessions');
+    } catch (e: any) {
+      useNotificationStore.getState().addNotification({
+        category: 'error', severity: 'error',
+        title: 'Delete Failed', body: e?.message || 'Unknown error',
+      });
+    }
+    setActionLoading(null);
+    setConfirmAction(null);
+  }, []);
+
+  const handleCleanup = useCallback(async () => {
+    setActionLoading('cleanup');
+    try {
+      await gateway.cleanupSessions();
+      useNotificationStore.getState().addNotification({
+        category: 'system', severity: 'success',
+        title: 'Cleanup Complete', body: 'Old sessions removed',
+      });
+      refreshGroup('sessions');
+    } catch (e: any) {
+      useNotificationStore.getState().addNotification({
+        category: 'error', severity: 'error',
+        title: 'Cleanup Failed', body: e?.message || 'Unknown error',
+      });
+    }
+    setActionLoading(null);
+    setConfirmAction(null);
+  }, []);
+
+  const filterKeys: FilterKey[] = ['all', 'dm', 'cron', 'subagent', 'group'];
+
   return (
-    <PageTransition className="flex flex-col flex-1 min-h-0 p-6 gap-5">
-
-      {/* ── Header ── */}
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-aegis-primary/10 border border-aegis-primary/20 shrink-0">
-            <Users size={18} className="text-aegis-primary" />
-          </div>
+    <PageTransition>
+      <div className="p-6 max-w-[1100px] mx-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
           <div>
-            <h1 className="text-xl font-extrabold leading-tight">
-              {t('sessions.title', 'Sessions')}
+            <h1 className="text-[18px] font-bold text-aegis-text flex items-center gap-2">
+              <Users size={20} /> Session Manager
             </h1>
-            <p className="text-[11px] text-aegis-text-muted">
-              {t('sessions.subtitle', 'Active and idle agent sessions')}
+            <p className="text-[12px] text-aegis-text-dim mt-0.5">
+              {sessions.length} sessions · {classified.filter((s) => s.running).length} active
             </p>
           </div>
-          {/* Total count badge */}
-          <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-lg bg-aegis-primary/10 border border-aegis-primary/20 text-aegis-primary uppercase tracking-[0.5px]">
-            {counts.all}
-          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => refreshGroup('sessions')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-aegis-text-muted bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+            >
+              <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+            </button>
+            <button
+              onClick={() => setConfirmAction({ type: 'cleanup' })}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-red-400 bg-red-500/5 border border-red-500/15 hover:bg-red-500/10 transition-colors"
+            >
+              <Trash2 size={12} /> Cleanup Old
+            </button>
+          </div>
         </div>
 
-        {/* Refresh button */}
-        <button
-          onClick={() => refreshGroup('sessions')}
-          disabled={loading}
-          className={clsx(
-            'flex items-center gap-1.5 px-3 py-2 rounded-xl border text-[11px] font-semibold transition-colors',
-            'border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text-muted hover:text-aegis-text-secondary',
-            'bg-[rgb(var(--aegis-overlay)/0.02)] hover:bg-[rgb(var(--aegis-overlay)/0.04)]',
-            loading && 'opacity-50 pointer-events-none',
-          )}
-        >
-          {loading ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : (
-            <RefreshCw size={13} />
-          )}
-          {t('sessions.refresh', 'Refresh')}
-        </button>
-      </div>
-
-      {/* ── Filter bar ── */}
-      <div className="flex items-center gap-1.5">
-        {FILTERS.map((f) => {
-          const count = counts[f.id];
-          const active = filter === f.id;
-          return (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className={clsx(
-                'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-all',
-                active
-                  ? 'bg-aegis-primary/10 border-aegis-primary/25 text-aegis-primary'
-                  : 'bg-[rgb(var(--aegis-overlay)/0.02)] border-[rgb(var(--aegis-overlay)/0.06)] text-aegis-text-muted hover:text-aegis-text-secondary hover:border-[rgb(var(--aegis-overlay)/0.10)]',
-              )}
-            >
-              {t(f.labelKey, f.fallback)}
-              <span
+        {/* Search + Filters */}
+        <div className="flex gap-3 mb-4 items-center">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-aegis-text-dim" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search sessions..."
+              className="w-full pl-9 pr-3 py-2 rounded-lg text-[12px] bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text placeholder:text-aegis-text-dim/40 outline-none focus:border-aegis-primary/30"
+            />
+          </div>
+          <div className="flex gap-1">
+            {filterKeys.map((key) => (
+              <button
+                key={key}
+                onClick={() => setFilter(key)}
                 className={clsx(
-                  'text-[9px] font-bold px-1.5 py-0.5 rounded-md min-w-[18px] text-center',
-                  active
-                    ? 'bg-aegis-primary/15 text-aegis-primary'
-                    : 'bg-[rgb(var(--aegis-overlay)/0.06)] text-aegis-text-dim',
+                  'px-2.5 py-1.5 rounded-md text-[11px] font-medium border transition-all',
+                  filter === key
+                    ? 'bg-aegis-primary/10 text-aegis-primary border-aegis-primary/20'
+                    : 'bg-[rgb(var(--aegis-overlay)/0.03)] text-aegis-text-muted border-transparent hover:bg-[rgb(var(--aegis-overlay)/0.06)]'
                 )}
               >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                {key.charAt(0).toUpperCase() + key.slice(1)}
+                <span className="ml-1 opacity-60 text-[9px]">{counts[key]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
-      {/* ── Content ── */}
-      {loading && sessions.length === 0 ? (
-        /* Initial loading state */
-        <div className="flex-1 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-aegis-text-dim">
-            <Loader2 size={28} className="animate-spin" />
-            <p className="text-[12px]">{t('sessions.loading', 'Loading sessions…')}</p>
+        {/* Session Grid */}
+        {filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-[200px] text-aegis-text-dim">
+            <Users size={32} className="opacity-20 mb-2" />
+            <span className="text-[12px]">No sessions match your filters</span>
           </div>
-        </div>
-      ) : filtered.length === 0 ? (
-        /* Empty state */
-        <div className="flex-1 flex items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-center">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.08)]">
-              <Users size={24} className="text-aegis-text-dim" />
-            </div>
-            <div>
-              <p className="text-[13px] font-semibold text-aegis-text-muted">
-                {t('sessions.empty', 'No sessions found')}
-              </p>
-              <p className="text-[11px] text-aegis-text-dim mt-0.5">
-                {filter !== 'all'
-                  ? t('sessions.emptyFilter', 'Try switching to a different filter')
-                  : t('sessions.emptyHint', 'Sessions will appear here when agents are active')}
-              </p>
-            </div>
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <AnimatePresence mode="popLayout">
+              {filtered.map((s) => {
+                const type = s._type;
+                const pct = tokenPercent(s.totalTokens || s.contextTokens, s.maxTokens || 200000);
+                const isLoading = actionLoading === s.key;
+
+                return (
+                  <motion.div
+                    key={s.key}
+                    layout
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="p-4 rounded-xl bg-[rgb(var(--aegis-overlay)/0.02)] border border-[rgb(var(--aegis-overlay)/0.06)] hover:border-[rgb(var(--aegis-overlay)/0.12)] transition-all"
+                  >
+                    {/* Top row */}
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 text-[13px] font-semibold text-aegis-text">
+                        <span>{sessionIcon(type)}</span>
+                        <span className="truncate max-w-[180px]">{sessionLabel(s)}</span>
+                        <span className={clsx('text-[9px] px-1.5 py-0.5 rounded font-semibold', badgeClass(type))}>
+                          {type}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-aegis-text-dim">{s.model?.split('/').pop() || ''}</span>
+                    </div>
+
+                    {/* Meta */}
+                    <div className="flex items-center gap-3 text-[10px] text-aegis-text-dim mb-2">
+                      <span className="flex items-center gap-1"><Clock size={10} /> {timeAgo(s.updatedAt || s.lastActive)}</span>
+                      <span className="flex items-center gap-1"><Bot size={10} /> {s.key.split(':')[1] || 'main'}</span>
+                    </div>
+
+                    {/* Token bar */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="flex-1 h-1 rounded-full bg-[rgb(var(--aegis-overlay)/0.06)] overflow-hidden">
+                        <div className={clsx('h-full rounded-full transition-all', tokenBarColor(pct))} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-[10px] text-aegis-text-dim font-mono whitespace-nowrap">
+                        {fmtTokens(s.totalTokens || s.contextTokens)} / {fmtTokens(s.maxTokens || 200000)}
+                      </span>
+                    </div>
+
+                    {/* Last message preview */}
+                    {s.lastMessage?.content && (
+                      <div className="text-[11px] text-aegis-text-muted truncate mb-2">
+                        💬 {typeof s.lastMessage.content === 'string' ? s.lastMessage.content.substring(0, 60) : '...'}
+                      </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex gap-1.5 pt-2 border-t border-[rgb(var(--aegis-overlay)/0.04)]">
+                      <button
+                        onClick={() => setPreviewSession(s)}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-aegis-primary bg-aegis-primary/5 border border-aegis-primary/15 hover:bg-aegis-primary/10 transition-colors"
+                      >
+                        <Eye size={10} /> Preview
+                      </button>
+                      <button
+                        onClick={() => setConfirmAction({ type: 'reset', session: s })}
+                        disabled={isLoading}
+                        className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-blue-400 bg-blue-500/5 border border-blue-500/15 hover:bg-blue-500/10 transition-colors disabled:opacity-30"
+                      >
+                        <RotateCcw size={10} /> Reset
+                      </button>
+                      {s.key !== 'agent:main:main' && (
+                        <button
+                          onClick={() => setConfirmAction({ type: 'delete', session: s })}
+                          disabled={isLoading}
+                          className="flex items-center gap-1 px-2 py-1 rounded-md text-[10px] font-medium text-red-400 bg-red-500/5 border border-red-500/10 hover:bg-red-500/10 transition-colors disabled:opacity-30"
+                        >
+                          <Trash2 size={10} /> Delete
+                        </button>
+                      )}
+                      {isLoading && <Loader2 size={12} className="animate-spin text-aegis-text-dim ml-1" />}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
           </div>
-        </div>
-      ) : (
-        /* Sessions grid — 2 columns */
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 auto-rows-max overflow-y-auto pb-2">
-          {filtered.map((session) => (
-            <SessionCard key={session.key} session={session} />
-          ))}
-        </div>
-      )}
+        )}
+
+        {/* Preview Drawer */}
+        <AnimatePresence>
+          {previewSession && (
+            <PreviewDrawer session={previewSession} onClose={() => setPreviewSession(null)} />
+          )}
+        </AnimatePresence>
+
+        {/* Confirm Dialog */}
+        {confirmAction && (
+          <ConfirmDialog
+            title={
+              confirmAction.type === 'reset' ? 'Reset Session?' :
+              confirmAction.type === 'delete' ? 'Delete Session?' :
+              'Cleanup Old Sessions?'
+            }
+            message={
+              confirmAction.type === 'reset' ? `This will clear context for "${sessionLabel(confirmAction.session!)}"` :
+              confirmAction.type === 'delete' ? `This will permanently delete "${sessionLabel(confirmAction.session!)}"` :
+              'This will remove sessions older than 30 days. This cannot be undone.'
+            }
+            danger={confirmAction.type === 'delete' || confirmAction.type === 'cleanup'}
+            onCancel={() => setConfirmAction(null)}
+            onConfirm={() => {
+              if (confirmAction.type === 'reset' && confirmAction.session) handleReset(confirmAction.session);
+              else if (confirmAction.type === 'delete' && confirmAction.session) handleDelete(confirmAction.session);
+              else if (confirmAction.type === 'cleanup') handleCleanup();
+            }}
+          />
+        )}
+      </div>
     </PageTransition>
   );
 }

@@ -11,6 +11,7 @@ import { NavSidebar } from '@/components/Layout/NavSidebar';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OfflineOverlay } from '@/components/OfflineOverlay';
 import { ErrorBoundary } from '@/components/shared/ErrorBoundary';
+import { GlobalExecApprovalBar } from '@/components/shared/ExecApprovalBar';
 import { useChatStore } from '@/stores/chatStore';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
@@ -42,6 +43,8 @@ export function AppLayout() {
       <div className="flex flex-1 min-h-0 relative z-[1]" dir={dir}>
         {!focusMode && <NavSidebar />}
         <main className="flex-1 flex flex-col min-w-0 relative overflow-hidden">
+          {/* Global exec approval bar — visible on ALL pages */}
+          <GlobalExecApprovalBar />
           <div className="flex-1 overflow-y-auto scrollbar-thin">
             <ErrorBoundary>
               {showOffline ? (

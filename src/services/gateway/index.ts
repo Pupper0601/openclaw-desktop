@@ -99,6 +99,15 @@ export const gateway = {
   async getSessionStatus(sessionKey = 'agent:main:main') { return connection.request('sessions.list', {}); },
   async getAvailableModels() { return connection.request('models.list', {}); },
   async call(method: string, params: any = {}) { return connection.request(method, params); },
+  // Health & Status
+  async getHealth() { return connection.request('system.status', {}); },
+  async getChannelsStatus() { return connection.request('channels.status', {}); },
+
+  // Session Management
+  async resetSession(sessionKey: string) { return connection.request('sessions.reset', { key: sessionKey }); },
+  async deleteSession(sessionKey: string) { return connection.request('sessions.delete', { key: sessionKey }); },
+  async cleanupSessions() { return connection.request('sessions.cleanup', {}); },
+
   async getCostSummary(days = 30) { return connection.request('usage.cost', { days }); },
   async getSessionsUsage(params: any = {}) { return connection.request('sessions.usage', { limit: 50, ...params }); },
   async getSessionTimeseries(key: string) { return connection.request('sessions.usage.timeseries', { key }); },

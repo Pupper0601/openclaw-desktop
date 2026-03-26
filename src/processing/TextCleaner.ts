@@ -48,8 +48,10 @@ export function stripDirectives(text: string): string {
 /** Patterns that indicate noise messages (hidden from chat) */
 const NOISE_PATTERNS: RegExp[] = [
   /^Read HEARTBEAT\.md/i,
-  /^HEARTBEAT_OK$/,
+  /^HEARTBEAT_OK/,               // Matches "HEARTBEAT_OK" at start (with or without trailing text)
   /^NO_REPLY$/,
+  /heartbeat prompt:/i,           // Heartbeat system prompts
+  /^When reading HEARTBEAT\.md/i, // Heartbeat instruction variations
   /^احفظ جميع المعلومات المهمة/,
   /^⚠️ Session nearing compaction/,
   /^\[System\]\s*\[?\d{4}/i,  // Only match [System] followed by timestamp, not arbitrary content

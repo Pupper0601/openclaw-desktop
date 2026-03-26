@@ -5,7 +5,8 @@ import { useSettingsStore } from '@/stores/settingsStore';
 import { gateway } from '@/services/gateway/index';
 import { APP_VERSION } from '@/hooks/useAppVersion';
 import { useNotificationStore } from '@/stores/notificationStore';
-import { ChevronDown, Check, Search, Command, Zap } from 'lucide-react';
+import { ChevronDown, Check, Search, Command, Zap, ShieldAlert, Bell } from 'lucide-react';
+import { NotificationDrawer } from '@/components/NotificationDrawer';
 import clsx from 'clsx';
 
 // ═══════════════════════════════════════════════════════════
@@ -15,27 +16,39 @@ import clsx from 'clsx';
 /** Converts full model IDs to short display names.
  *  e.g. "anthropic/claude-sonnet-4-6" → "Sonnet 4.6"
  */
-function formatModelName(model: string | null): string {
+/** Model display name: tries availableModels alias first, then known patterns, then last segment */
+function formatModelName(model: string | null, availableModels?: Array<{ id: string; alias?: string }>): string {
   if (!model) return '—';
+
+  // 1. Check if availableModels has a display name/alias for this model
+  if (availableModels?.length) {
+    const match = availableModels.find((m) => m.id === model);
+    if (match?.alias) return match.alias;
+  }
+
+  // 2. Known patterns (fallback)
   const m = model.toLowerCase();
-  // Anthropic
   if (m.includes('claude-opus-4-6'))    return 'Opus 4.6';
   if (m.includes('claude-opus-4-5'))    return 'Opus 4.5';
   if (m.includes('claude-sonnet-4-6'))  return 'Sonnet 4.6';
   if (m.includes('claude-sonnet-4-5'))  return 'Sonnet 4.5';
+  if (m.includes('claude-haiku-4-5'))   return 'Haiku 4.5';
   if (m.includes('claude-haiku-3-5'))   return 'Haiku 3.5';
   if (m.includes('claude-haiku'))       return 'Haiku';
-  if (m.includes('claude-3-5'))         return 'Claude 3.5';
-  // Google
   if (m.includes('gemini-2.5-pro'))     return 'Gemini 2.5 Pro';
-  if (m.includes('gemini-2.0'))         return 'Gemini 2.0';
+  if (m.includes('gemini-2.5-flash'))   return 'Gemini Flash';
+  if (m.includes('gemini-3'))           return 'Gemini 3';
   if (m.includes('gemini'))             return 'Gemini';
-  // OpenAI
+  if (m.includes('gpt-5'))              return 'GPT-5';
   if (m.includes('gpt-4o'))             return 'GPT-4o';
   if (m.includes('gpt-4'))              return 'GPT-4';
   if (m.includes('o3'))                 return 'o3';
   if (m.includes('o1'))                 return 'o1';
-  // Fallback: last segment after /
+  if (m.includes('kimi-k2'))            return 'Kimi K2';
+  if (m.includes('llama-3'))            return 'Llama 3';
+  if (m.includes('qwen'))              return 'Qwen';
+
+  // 3. Fallback: last segment after /
   const parts = model.split('/');
   return parts[parts.length - 1];
 }
@@ -373,6 +386,52 @@ function useAutoUpdate() {
   return { status, updateVersion, downloadPercent, check, download, install };
 }
 
+// ── NotificationBell — Bell icon with unread badge + drawer toggle ────────
+function NotificationBell() {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const unreadCount = useNotificationStore((s) => s.unreadCount);
+
+  return (
+    <>
+      <button
+        onClick={() => setDrawerOpen(!drawerOpen)}
+        className={clsx(
+          'no-drag relative w-[32px] h-[22px] rounded-[11px] flex items-center justify-center',
+          'transition-all duration-150',
+          'hover:bg-[rgb(var(--aegis-overlay)/0.08)]',
+          drawerOpen ? 'bg-[rgb(var(--aegis-overlay)/0.08)]' : 'bg-[rgb(var(--aegis-overlay)/0.04)]',
+        )}
+        style={{ border: '1px solid rgb(var(--aegis-overlay) / 0.08)' }}
+        title="Notifications"
+      >
+        <Bell size={12} className="text-aegis-text-dim" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full bg-red-500 text-white text-[8px] font-bold flex items-center justify-center animate-pulse">
+            {unreadCount > 99 ? '99+' : unreadCount}
+          </span>
+        )}
+      </button>
+      <NotificationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+    </>
+  );
+}
+
+// ── ApprovalBadge — Pulsing indicator when exec approvals are pending ─────
+function ApprovalBadge() {
+  const count = useChatStore((s) => s.execApprovals.length);
+  if (count === 0) return null;
+
+  return (
+    <div
+      className="no-drag flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/25 animate-pulse cursor-default"
+      title={`${count} exec approval${count > 1 ? 's' : ''} pending`}
+    >
+      <ShieldAlert size={10} className="text-amber-400" />
+      <span className="text-[10px] font-bold text-amber-400">{count}</span>
+    </div>
+  );
+}
+
 // ── VersionBadge — Colored pill showing version + update state ────────────
 function VersionBadge() {
   const { status, updateVersion, downloadPercent, check, download, install } = useAutoUpdate();
@@ -474,6 +533,7 @@ export function TitleBar() {
             DESKTOP
           </span>
           <VersionBadge />
+          <ApprovalBadge />
         </div>
 
         {/* Model + Tokens + Status */}
@@ -533,7 +593,10 @@ export function TitleBar() {
         </button>
       </div>
 
-      {/* ── Right: Window Controls (Windows style: ─ □ ✕) ── */}
+      {/* ── Right: Bell + Window Controls ── */}
+      <div className="no-drag flex items-center gap-1 px-4">
+        <NotificationBell />
+      </div>
       <div className="no-drag flex items-center gap-1 px-4">
         <button
           onClick={handleMinimize}

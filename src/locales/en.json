@@ -28,7 +28,8 @@
     "terminal": "Terminal",
     "notifications": "Notifications",
     "calendar": "Calendar",
-    "voiceLive": "Voice Chat"
+    "voiceLive": "Voice Chat",
+    "sessions": "Sessions"
   },
   "skills": {
     "title": "Skills",
@@ -323,12 +324,18 @@
     "retrying": "Attempting to reconnect..."
   },
   "notifications": {
-    "newMessage": "New Message",
-    "replyComplete": "Reply Complete",
-    "connected": "Connected",
-    "connectedBody": "Successfully connected to Gateway",
-    "paired": "Paired",
-    "pairedBody": "AEGIS Desktop successfully paired with Gateway"
+    "title": "Notifications",
+    "unread": "unread",
+    "markAllRead": "Mark all read",
+    "clear": "Clear",
+    "empty": "No notifications",
+    "filter": {
+      "all": "All",
+      "error": "Errors",
+      "approval": "Approvals",
+      "cron": "Cron",
+      "system": "System"
+    }
   },
   "token": {
     "lastUpdate": "Last update",
@@ -916,5 +923,12 @@
     "hintListening": "Speak...",
     "hintUnmute": "Tap to unmute",
     "interrupt": "Tap to interrupt"
+  },
+  "execApproval": {
+    "title": "⚡ Exec Approval Required",
+    "in": "in",
+    "allowOnce": "Allow Once",
+    "allowAlways": "Always",
+    "deny": "Deny"
   }
 }

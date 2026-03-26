@@ -191,6 +191,37 @@ export function autoInlineCode(text: string): string {
     // Skip lines that are already fully code
     if (line.trim().startsWith('`')) return line;
 
+    // ── Protect URLs and markdown links before any detection ──
+    // Replace URLs and markdown links with placeholders, run detection, then restore.
+    const placeholders: string[] = [];
+    const PH = (i: number) => `\x00PH${i}\x00`;
+
+    // Protect markdown links: [text](url)
+    line = line.replace(/\[([^\]]*)\]\([^)]+\)/g, (m) => {
+      placeholders.push(m);
+      return PH(placeholders.length - 1);
+    });
+
+    // Protect angle-bracket links: <https://...>
+    line = line.replace(/<(https?:\/\/[^>]+)>/g, (m) => {
+      placeholders.push(m);
+      return PH(placeholders.length - 1);
+    });
+
+    // Protect bare URLs: https://... or http://...
+    line = line.replace(/https?:\/\/[^\s<>\])`]+/g, (m) => {
+      placeholders.push(m);
+      return PH(placeholders.length - 1);
+    });
+
+    // Protect existing inline code: `...`
+    line = line.replace(/`[^`]+`/g, (m) => {
+      placeholders.push(m);
+      return PH(placeholders.length - 1);
+    });
+
+    // ── Now safely detect code patterns ──
+
     // Detect file paths (unix & windows)
     line = line.replace(/(?<![`\w])([\/~][\w\-\.\/]+\.\w{1,10})(?![`\w])/g, '`$1`');
     line = line.replace(/(?<![`\w])([A-Z]:\\[\w\\\-\.]+)(?![`\w])/g, '`$1`');
@@ -204,6 +235,9 @@ export function autoInlineCode(text: string): string {
       if (match.length < 4 || /^(up-to|out-of|day-to|end-to|how-to|step-by|one-to)/.test(match)) return match;
       return '`' + match + '`';
     });
+
+    // ── Restore protected content ──
+    line = line.replace(/\x00PH(\d+)\x00/g, (_, i) => placeholders[parseInt(i)]);
 
     return line;
   }).join('\n');

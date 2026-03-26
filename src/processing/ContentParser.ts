@@ -205,8 +205,10 @@ export function parseHistoryMessage(msg: any, toolIntentEnabled: boolean): Rende
   // Filter noise from both assistant and user (heartbeat prompts, system injections)
   if (isNoise(content)) {
     if (role === 'assistant') return [];
-    if (role === 'user' && /^(Read HEARTBEAT|HEARTBEAT_OK|NO_REPLY)/i.test(content)) return [];
+    if (role === 'user' && /^(Read HEARTBEAT|HEARTBEAT_OK|NO_REPLY|When reading HEARTBEAT)/i.test(content)) return [];
   }
+  // Additional heartbeat detection: assistant messages that are purely heartbeat results
+  if (role === 'assistant' && /^HEARTBEAT_OK/i.test(content.trim())) return [];
 
   // Clean content
   let markdown = role === 'user' ? stripUserMeta(content) : content;
