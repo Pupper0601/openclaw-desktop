@@ -18,7 +18,7 @@ jobs:
 
       - name: Fetch Upstream
         run: |
-          git remote add upstream https://github.com/AegisStar/aegis-desktop.git
+          git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop.git
           git fetch upstream
 
       - name: Compare Branches

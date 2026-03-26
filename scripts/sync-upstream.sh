@@ -31,7 +31,7 @@ if ! git remote | grep -q "upstream"; then
     read -p "是否添加原作者仓库为 upstream? (y/n) " -n 1 -r
     echo ""
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        git remote add upstream https://github.com/AegisStar/aegis-desktop.git
+        git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop.git
         echo -e "${GREEN}✅ 已添加 upstream 远程仓库${NC}"
     else
         echo -e "${RED}❌ 取消操作${NC}"
