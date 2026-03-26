@@ -18,6 +18,10 @@ import * as fs from 'fs';
 import { createTray } from './tray';
 import { initI18n, setLanguage, t } from './i18n';
 import * as crypto from 'crypto';
+
+// Allow connections to gateways behind self-signed SSL certs.
+// Without this, Node.js fetch (used for pairing) silently rejects HTTPS.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import { execFileSync, spawnSync, execSync } from 'child_process';
 // node-pty: dynamic require — graceful fallback if native module unavailable
 let pty: typeof import('node-pty') | null = null;
@@ -297,13 +301,14 @@ function createWindow(): void {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; " +
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: https:; " +
+          "default-src 'self' 'unsafe-inline' data: blob:; " +
+          "script-src 'self' 'unsafe-inline' blob: https:; " +
           "style-src-elem 'self' 'unsafe-inline' https:; " +
           "img-src 'self' data: blob: https: http:; " +
           "media-src 'self' data: blob: https: http:; " +
           "connect-src 'self' ws: wss: http: https:; " +
-          "font-src 'self' data: https:;"
+          "font-src 'self' data: https:; " +
+          "frame-src 'self' blob:;"
         ],
       },
     });
@@ -562,6 +567,48 @@ function setupIPC(): void {
       return { success: true, backupPath };
     } catch (err: any) {
       console.error('[Config:write] Error:', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── config:patch — deep-merge a partial object into the live config file ──
+  ipcMain.handle('config:patch', (_e, { path: configPath, patch }: { path?: string; patch: Record<string, unknown> }) => {
+    try {
+      const targetPath = configPath || detectOpenClawConfigPath();
+
+      // Read current file (or start from empty object)
+      let current: Record<string, unknown> = {};
+      if (fs.existsSync(targetPath)) {
+        current = JSON.parse(fs.readFileSync(targetPath, 'utf-8'));
+      }
+
+      // Deep-merge patch into current (shallow top-level merge — keys in patch win)
+      function deepMerge(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+        const result: Record<string, unknown> = { ...base };
+        for (const key of Object.keys(override)) {
+          const bv = base[key];
+          const ov = override[key];
+          if (ov !== null && typeof ov === 'object' && !Array.isArray(ov) &&
+              bv !== null && typeof bv === 'object' && !Array.isArray(bv)) {
+            result[key] = deepMerge(bv as Record<string, unknown>, ov as Record<string, unknown>);
+          } else {
+            result[key] = ov;
+          }
+        }
+        return result;
+      }
+
+      const merged = deepMerge(current, patch);
+      const backupPath = `${targetPath}.bak`;
+      if (fs.existsSync(targetPath)) {
+        fs.copyFileSync(targetPath, backupPath);
+      }
+      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+      fs.writeFileSync(targetPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+      console.log('[Config:patch] Patched:', targetPath);
+      return { success: true, backupPath };
+    } catch (err: any) {
+      console.error('[Config:patch] Error:', err.message);
       return { success: false, error: err.message };
     }
   });
@@ -1276,24 +1323,31 @@ function registerHotkey(): void {
     if (result.error) return { success: false, error: (result.error as Error).message };
     const exitCode = result.status ?? -1;
     const stdout = (result.stdout ?? '').trim();
+    const stderr = (result.stderr ?? '').trim();
+    // Combine stdout + stderr so findings written to either stream are detected
+    const combined = `${stdout}\n${stderr}`.trim();
     const statusMap: Record<number, string> = { 0: 'clean', 1: 'findings', 2: 'unresolved' };
 
     // Primary: use exit code
     let status = statusMap[exitCode] ?? 'unknown';
 
-    // Fallback: if exit code is 0 but stdout contains finding indicators, override
-    if (status === 'clean' && stdout) {
-      const lower = stdout.toLowerCase();
+    // Content-based override: check actual output regardless of exit code.
+    // Some openclaw versions always exit 0 but write findings to stdout/stderr.
+    if (combined) {
+      const lower = combined.toLowerCase();
       if (lower.includes('plaintext') || lower.includes('finding') || lower.includes('exposed') || lower.includes('leaked')) {
         status = 'findings';
       } else if (lower.includes('unresolved') || lower.includes('could not resolve')) {
         status = 'unresolved';
+      } else if (status === 'unknown' && (lower.includes('clean') || lower.includes('no issues') || lower.includes('all clear'))) {
+        // Exit code was unexpected but output explicitly says clean
+        status = 'clean';
       }
     }
 
     return {
       success: true,
-      data: { status, rawOutput: stdout, exitCode },
+      data: { status, rawOutput: combined, exitCode },
     };
   });
   ipcMain.handle('secrets:reload', async () => {
@@ -1381,6 +1435,15 @@ if (!gotTheLock) {
     tray = createTray(mainWindow!, app);
     registerHotkey();
 
+    // Accept self-signed / invalid certificates for WSS connections
+    // behind reverse proxies (e.g. self-signed nginx, local dev certs).
+    // Without this, Electron silently rejects WSS and the user sees
+    // a pairing screen instead of a proper error.
+    app.on('certificate-error', (event, _webContents, _url, _error, _cert, callback) => {
+      event.preventDefault();
+      callback(true);
+    });
+
     // Gateway connection is now handled by React renderer
     // No auto-connect from main process needed
   });
@@ -1404,5 +1467,5 @@ app.on('before-quit', () => {
   ptyProcesses.clear();
 });
 
-console.log('Æ AEGIS Desktop v5.6.0 started');
+console.log('Æ AEGIS Desktop v5.6.2 started');
 
