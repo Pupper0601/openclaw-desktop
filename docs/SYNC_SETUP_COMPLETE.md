@@ -92,7 +92,7 @@ git push origin master
 ```bash
 # 周末例行维护
 1. 运行 bash scripts/sync-upstream.sh
-2. 如有冲突,根据 SYNC_UPSTREAM_GUIDE.md 解决
+2. 如有冲突,根据 [SYNC_UPSTREAM_GUIDE.md](./SYNC_UPSTREAM_GUIDE.md) 解决
 3. 补充缺失的中文翻译
 4. 测试新功能
 5. 推送到你的仓库
@@ -168,10 +168,10 @@ node scripts/check-translation-sync.js
 
 ## 📞 需要帮助?
 
-1. **查看详细指南**: `SYNC_UPSTREAM_GUIDE.md`
-2. **快速参考**: `QUICK_SYNC_GUIDE.md`
+1. **查看详细指南**: [`SYNC_UPSTREAM_GUIDE.md`](./SYNC_UPSTREAM_GUIDE.md)
+2. **快速参考**: [`QUICK_SYNC_GUIDE.md`](./QUICK_SYNC_GUIDE.md)
 3. **Git 官方文档**: https://git-scm.com/doc
-4. **原作者仓库**: https://github.com/AegisStar/aegis-desktop
+4. **原作者仓库**: https://github.com/rshodoskar-star/openclaw-desktop
 
 ---
 

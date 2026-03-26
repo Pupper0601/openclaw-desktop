@@ -433,10 +433,10 @@ node scripts/check-translation-sync.js
 - [贡献指南](CONTRIBUTING.md) —— 如何贡献
 - [安全策略](SECURITY.md) —— 漏洞报告
 - [行为准则](CODE_OF_CONDUCT.md) —— 社区准则
-- [构建指南](BUILD_GUIDE.md) —— 详细的构建说明
-- [GitHub Actions 指南](ACTIONS_GUIDE.md) —— 自动化同步说明
-- [上游同步指南](SYNC_UPSTREAM_GUIDE.md) —— 与原作者保持同步
-- [国际化迁移说明](I18N_MIGRATION.md) —— 国际化改造记录
+- [构建指南](docs/BUILD_GUIDE.md) —— 详细的构建说明
+- [GitHub Actions 指南](docs/ACTIONS_GUIDE.md) —— 自动化同步说明
+- [上游同步指南](docs/SYNC_UPSTREAM_GUIDE.md) —— 与原作者保持同步
+- [国际化迁移说明](docs/I18N_MIGRATION.md) —— 国际化改造记录
 
 ---
 

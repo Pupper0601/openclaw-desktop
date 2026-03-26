@@ -350,9 +350,9 @@ master              ← 你的中文版本,可直接合并 PR
 ## 📞 需要帮助?
 
 ### 查看文档
-- `SYNC_UPSTREAM_GUIDE.md` - 详细同步步骤
-- `QUICK_SYNC_GUIDE.md` - 快速参考
-- `I18N_MIGRATION.md` - 国际化改造记录
+- [SYNC_UPSTREAM_GUIDE.md](./SYNC_UPSTREAM_GUIDE.md) - 详细同步步骤
+- [QUICK_SYNC_GUIDE.md](./QUICK_SYNC_GUIDE.md) - 快速参考
+- [I18N_MIGRATION.md](./I18N_MIGRATION.md) - 国际化改造记录
 
 ### 调试 Actions
 1. 在本地测试脚本:
