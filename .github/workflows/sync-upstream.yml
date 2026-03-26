@@ -101,7 +101,7 @@ jobs:
       - name: Push to Branch
         if: steps.check.outputs.status == 'has_updates'
         run: |
-          git push origin ${BRANCH_NAME}
+          git push -u origin ${BRANCH_NAME}
           echo "Pushed branch: ${BRANCH_NAME}"
 
       - name: Create Pull Request
