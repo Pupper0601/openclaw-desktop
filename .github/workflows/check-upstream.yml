@@ -43,7 +43,7 @@ jobs:
         if: steps.check.outputs.status == 'has_updates'
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.PAT }}
           event-type: upstream-updates-available
           client-payload: |
             {
