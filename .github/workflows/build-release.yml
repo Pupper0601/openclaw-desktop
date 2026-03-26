@@ -81,7 +81,8 @@ jobs:
   build-windows:
     name: 构建Windows版本
     runs-on: windows-latest
-    needs: [check-translation, translate]
+    needs: check-translation
+    if: always() && (needs.check-translation.result == 'success')
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -112,7 +113,8 @@ jobs:
   build-macos:
     name: 构建macOS版本
     runs-on: macos-latest
-    needs: [check-translation, translate]
+    needs: check-translation
+    if: always() && (needs.check-translation.result == 'success')
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
