@@ -89,7 +89,9 @@ jobs:
       - name: 创建新分支并推送（合并失败时）
         if: steps.merge.outputs.status == 'failed'
         run: |
+          # 重置到HEAD，然后合并上游到新分支
           git checkout -b merge-upstream-updates
+          git merge upstream/master --no-edit || echo "合并到新分支"
           git push origin merge-upstream-updates --force
 
       - name: 创建PR（合并失败时）
