@@ -124,8 +124,7 @@ jobs:
           **上游提交**: ${{ github.event.client_payload.upstream_commit }}
           **本地提交**: ${{ github.event.client_payload.local_commit }}
 
-          请检查并解决冲突后合并此PR。" \
-            --label "upstream,merge,conflict"
+          请检查并解决冲突后合并此PR。"
           echo "PR创建成功"
         env:
           GH_TOKEN: ${{ secrets.PAT }}
