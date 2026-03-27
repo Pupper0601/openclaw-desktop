@@ -86,23 +86,29 @@ jobs:
               "triggered_by": "sync-and-merge"
             }
 
+      - name: 创建新分支并推送（合并失败时）
+        if: steps.merge.outputs.status == 'failed'
+        run: |
+          git checkout -b merge-upstream-updates
+          git push origin merge-upstream-updates --force
+
       - name: 创建PR（合并失败时）
         if: steps.merge.outputs.status == 'failed'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ secrets.PAT }}
-          commit-message: "尝试合并上游更新（存在冲突）"
-          title: "上游更新合并请求"
-          body: |
-            检测到上游仓库有更新，但自动合并时遇到冲突，需要人工确认。
+        run: |
+          gh pr create \
+            --base master \
+            --head merge-upstream-updates \
+            --title "上游更新合并请求" \
+            --body "检测到上游仓库有更新，但自动合并时遇到冲突，需要人工确认。
 
-            **上游提交**: ${{ github.event.client_payload.upstream_commit }}
-            **本地提交**: ${{ github.event.client_payload.local_commit }}
+          **上游提交**: ${{ github.event.client_payload.upstream_commit }}
+          **本地提交**: ${{ github.event.client_payload.local_commit }}
 
-            请检查并解决冲突后合并此PR。
-          branch: merge-upstream-updates
-          base: master
-          labels: "upstream,merge,conflict"
+          请检查并解决冲突后合并此PR。" \
+            --label "upstream,merge,conflict" \
+            || echo "PR 可能已经存在"
+        env:
+          GH_TOKEN: ${{ secrets.PAT }}
 
       - name: 总结
         run: |
