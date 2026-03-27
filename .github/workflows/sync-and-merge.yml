@@ -36,20 +36,27 @@ jobs:
           git fetch upstream
           LOCAL=$(git rev-parse HEAD)
           UPSTREAM=$(git rev-parse upstream/master)
-          
+
           if [ "$LOCAL" = "$UPSTREAM" ]; then
             echo "✅ 已经是最新版本，无需合并"
             echo "status=already_uptodate" >> $GITHUB_OUTPUT
             exit 0
           fi
-          
+
           # 尝试合并 upstream/master 到当前分支
-          git merge --no-commit --no-ff upstream/master
-          if [ $? -eq 0 ]; then
-            echo "✅ 自动合并成功"
-            echo "status=success" >> $GITHUB_OUTPUT
-            git commit -m "Merge upstream updates"
-            git push origin HEAD
+          # 使用 || true 确保即使合并失败也继续执行后续步骤
+          if git merge --no-commit --no-ff upstream/master 2>&1; then
+            # 合并成功，检查是否有实际的更改
+            if git diff-index --quiet HEAD --; then
+              echo "✅ 没有实际更改需要提交"
+              echo "status=no_changes" >> $GITHUB_OUTPUT
+              git merge --abort
+            else
+              echo "✅ 自动合并成功"
+              echo "status=success" >> $GITHUB_OUTPUT
+              git commit -m "Merge upstream updates"
+              git push origin HEAD
+            fi
           else
             echo "🔄 自动合并失败，存在冲突，需要人工确认"
             echo "status=failed" >> $GITHUB_OUTPUT
@@ -65,6 +72,18 @@ jobs:
           client-payload: |
             {
               "merge_status": "success",
+              "triggered_by": "sync-and-merge"
+            }
+
+      - name: 触发构建工作流（无需更改时）
+        if: steps.merge.outputs.status == 'no_changes'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PAT }}
+          event-type: build-trigger
+          client-payload: |
+            {
+              "merge_status": "no_changes",
               "triggered_by": "sync-and-merge"
             }
 
@@ -93,6 +112,9 @@ jobs:
           if [ "${{ steps.merge.outputs.status }}" = "success" ]; then
             echo "### ✅ 自动合并成功" >> $GITHUB_STEP_SUMMARY
             echo "已成功将上游更新合并到当前分支，并触发了构建工作流。" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ steps.merge.outputs.status }}" = "no_changes" ]; then
+            echo "### ✅ 没有实际更改" >> $GITHUB_STEP_SUMMARY
+            echo "上游更新已合并，但没有实际代码更改，直接触发构建。" >> $GITHUB_STEP_SUMMARY
           elif [ "${{ steps.merge.outputs.status }}" = "already_uptodate" ]; then
             echo "### ✅ 已经是最新版本" >> $GITHUB_STEP_SUMMARY
             echo "当前分支已与上游保持同步，无需操作。" >> $GITHUB_STEP_SUMMARY
