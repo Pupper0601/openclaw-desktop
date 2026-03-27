@@ -41,24 +41,16 @@ jobs:
             echo "✅ 已经是最新版本，无需合并"
             echo "status=already_uptodate" >> $GITHUB_OUTPUT
           else
-            # 尝试合并 upstream/master 到当前分支
-            # 使用 || true 确保即使合并失败也继续执行后续步骤
-            if git merge --no-commit --no-ff upstream/master 2>&1; then
-              # 合并成功，检查是否有实际的更改
-              if git diff-index --quiet HEAD --; then
-                echo "✅ 没有实际更改需要提交"
-                echo "status=no_changes" >> $GITHUB_OUTPUT
-                git merge --abort
-              else
-                echo "✅ 自动合并成功"
-                echo "status=success" >> $GITHUB_OUTPUT
-                git commit -m "Merge upstream updates"
-                git push origin HEAD
-              fi
+            # 尝试直接合并（保留这个简单路径）
+            if git merge upstream/master --no-edit 2>&1; then
+              echo "✅ 自动合并成功"
+              echo "status=success" >> $GITHUB_OUTPUT
+              git push origin HEAD
             else
               echo "🔄 自动合并失败，存在冲突，需要人工确认"
               echo "status=failed" >> $GITHUB_OUTPUT
-              git merge --abort
+              # 保留合并状态，不执行 abort
+              echo "保留合并状态，准备创建PR分支"
             fi
           fi
 
@@ -74,50 +66,23 @@ jobs:
               "triggered_by": "sync-and-merge"
             }
 
-      - name: 触发构建工作流（无需更改时）
-        if: steps.merge.outputs.status == 'no_changes'
-        uses: peter-evans/repository-dispatch@v3
-        with:
-          token: ${{ secrets.PAT }}
-          event-type: build-trigger
-          client-payload: |
-            {
-              "merge_status": "no_changes",
-              "triggered_by": "sync-and-merge"
-            }
-
       - name: 创建新分支并推送（合并失败时）
         if: steps.merge.outputs.status == 'failed'
         run: |
           echo "开始创建包含冲突的分支..."
-          # 显示当前状态
-          git status
-          git log --oneline -5
-          echo "=== 当前提交 ==="
-          git rev-parse HEAD
-          echo "=== 上游提交 ==="
-          git rev-parse upstream/master
-          # 确保工作目录干净
-          git reset --hard HEAD
-          git clean -fd
-          # 创建新分支（基于master）
-          git checkout master
-          git checkout -b merge-upstream-updates
-          # 尝试合并上游到新分支
-          echo "尝试合并上游..."
-          if git merge --no-commit --no-ff upstream/master 2>&1; then
-            echo "合并成功（没有冲突）"
-            if git diff-index --quiet HEAD --; then
-              echo "没有实际更改"
-            else
-              echo "有更改，提交合并"
-              git commit -m "Merge upstream"
-            fi
+          # 检查是否处于合并状态
+          if [ -f ".git/MERGE_HEAD" ]; then
+            echo "当前处于合并状态，直接创建分支"
+            # 创建新分支，保留合并状态
+            git checkout -b merge-upstream-updates
           else
-            echo "合并失败（有冲突），保留冲突标记"
-            # 不执行 merge --abort，保留冲突
+            echo "警告：不在合并状态，尝试重新创建合并"
+            git merge --abort || true
+            git reset --hard HEAD
+            git checkout -b merge-upstream-updates
+            git merge upstream/master --no-edit || echo "重新合并失败"
           fi
-          # 显示合并后的状态
+          # 显示状态
           git status
           git log --oneline -3
           # 强制推送分支
@@ -128,27 +93,29 @@ jobs:
         if: steps.merge.outputs.status == 'failed'
         run: |
           echo "开始创建PR..."
-          # 检查分支差异
-          echo "检查分支差异..."
+          # 检查是否存在分支差异（有冲突或提交）
           git fetch origin master
           DIFF_COUNT=$(git rev-list --count origin/master..merge-upstream-updates 2>/dev/null || echo "0")
           echo "差异提交数: $DIFF_COUNT"
-          if [ "$DIFF_COUNT" = "0" ]; then
-            echo "错误：分支与master没有差异，无法创建PR"
-            exit 1
+          
+          # 检查是否有未完成的合并
+          if [ -f ".git/MERGE_HEAD" ] || [ "$DIFF_COUNT" -gt "0" ]; then
+            echo "检测到未完成的合并或提交，创建PR..."
+            gh pr create \
+              --base master \
+              --head merge-upstream-updates \
+              --title "上游更新合并请求" \
+              --body "检测到上游仓库有更新，但自动合并时遇到冲突，需要人工确认。
+
+**上游提交**: ${{ github.event.client_payload.upstream_commit }}
+**本地提交**: ${{ github.event.client_payload.local_commit }}
+
+请检查并解决冲突后合并此PR。"
+            echo "PR创建成功"
+          else
+            echo "警告：分支与master没有差异，可能不需要创建PR"
+            echo "跳过PR创建"
           fi
-          # 创建PR
-          gh pr create \
-            --base master \
-            --head merge-upstream-updates \
-            --title "上游更新合并请求" \
-            --body "检测到上游仓库有更新，但自动合并时遇到冲突，需要人工确认。
-
-          **上游提交**: ${{ github.event.client_payload.upstream_commit }}
-          **本地提交**: ${{ github.event.client_payload.local_commit }}
-
-          请检查并解决冲突后合并此PR。"
-          echo "PR创建成功"
         env:
           GH_TOKEN: ${{ secrets.PAT }}
 
