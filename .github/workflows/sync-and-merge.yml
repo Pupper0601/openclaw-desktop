@@ -89,14 +89,32 @@ jobs:
       - name: 创建新分支并推送（合并失败时）
         if: steps.merge.outputs.status == 'failed'
         run: |
-          # 重置到HEAD，然后合并上游到新分支
+          echo "开始创建包含冲突的分支..."
+          # 显示当前状态
+          git status
+          git log --oneline -5
+          # 创建新分支
           git checkout -b merge-upstream-updates
-          git merge upstream/master --no-edit || echo "合并到新分支"
+          # 尝试合并上游到新分支（不使用 --abort，让冲突保留）
+          if git merge upstream/master --no-edit 2>&1; then
+            echo "合并成功（可能没有实际冲突）"
+          else
+            echo "检测到合并冲突或合并问题"
+          fi
+          # 显示合并后的状态
+          git status
+          git log --oneline -3
+          # 强制推送分支（包含冲突标记）
           git push origin merge-upstream-updates --force
+          echo "分支已推送"
 
       - name: 创建PR（合并失败时）
         if: steps.merge.outputs.status == 'failed'
         run: |
+          echo "开始创建PR..."
+          # 检查分支是否存在
+          git ls-remote --heads origin merge-upstream-updates || exit 1
+          # 创建PR
           gh pr create \
             --base master \
             --head merge-upstream-updates \
@@ -107,8 +125,8 @@ jobs:
           **本地提交**: ${{ github.event.client_payload.local_commit }}
 
           请检查并解决冲突后合并此PR。" \
-            --label "upstream,merge,conflict" \
-            || echo "PR 可能已经存在"
+            --label "upstream,merge,conflict"
+          echo "PR创建成功"
         env:
           GH_TOKEN: ${{ secrets.PAT }}
 
