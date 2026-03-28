@@ -1,0 +1,245 @@
+name: 构建发布
+
+on:
+  repository_dispatch:
+    types: [构建触发]
+  workflow_dispatch:
+    inputs:
+      发布版本:
+        description: '是否创建发布'
+        required: true
+        default: 'false'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+      版本号:
+        description: '版本号（如：1.2.3）'
+        required: false
+        type: string
+      更新说明:
+        description: '更新说明（手动构建时填写）'
+        required: false
+        type: string
+
+jobs:
+  准备构建:
+    runs-on: ubuntu-latest
+    outputs:
+      需要发布: ${{ steps.设置.outputs.需要发布 }}
+      版本号: ${{ steps.设置.outputs.版本号 }}
+      更新说明: ${{ steps.设置.outputs.更新说明 }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 设置构建参数
+        id: 设置
+        run: |
+          # 判断是否需要发布
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "需要发布=${{ github.event.client_payload.需要发布 }}" >> $GITHUB_OUTPUT
+            echo "触发源=${{ github.event.client_payload.触发源 }}" >> $GITHUB_OUTPUT
+          else
+            echo "需要发布=${{ github.event.inputs.发布版本 }}" >> $GITHUB_OUTPUT
+            echo "触发源=手动触发" >> $GITHUB_OUTPUT
+          fi
+          
+          # 生成版本号
+          if [ -n "${{ github.event.inputs.版本号 }}" ]; then
+            echo "版本号=${{ github.event.inputs.版本号 }}" >> $GITHUB_OUTPUT
+          else
+            echo "版本号=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # 获取更新说明
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.更新说明 }}" ]; then
+            echo "更新说明=${{ github.event.inputs.更新说明 }}" >> $GITHUB_OUTPUT
+          else
+            # 自动构建时获取上游更新内容
+            echo "更新说明=自动构建发布" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 生成上游更新日志
+        if: github.event_name == 'repository_dispatch'
+        id: 更新日志
+        run: |
+          if [ -n "${{ github.event.client_payload.上游消息 }}" ]; then
+            # 这里可以添加翻译逻辑
+            echo "上游更新内容=${{ github.event.client_payload.上游消息 }}" >> $GITHUB_OUTPUT
+            echo "已获取上游更新信息"
+          fi
+
+  构建Windows:
+    runs-on: windows-latest
+    needs: 准备构建
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建应用
+        run: npm run build
+
+      - name: 构建Windows安装包
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传Windows构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/*.exe
+          retention-days: 7
+
+  构建macOS:
+    runs-on: macos-latest
+    needs: 准备构建
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建应用
+        run: npm run build
+
+      - name: 构建macOS安装包
+        run: npx electron-builder --mac --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 上传macOS构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: release/*.dmg
+          retention-days: 7
+
+  发布:
+    runs-on: ubuntu-latest
+    needs: [准备构建, 构建Windows, 构建macOS]
+    if: needs.准备构建.outputs.需要发布 == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: 构建产物
+
+      - name: 准备发布说明
+        id: 说明
+        run: |
+          # 创建发布说明
+          cat > 发布说明.md << EOF
+          ## 版本 v${{ needs.准备构建.outputs.版本号 }}
+          
+          ### 更新内容
+          
+          ${{ needs.准备构建.outputs.更新说明 }}
+          
+          ### 构建信息
+          
+          - 触发源: ${{ needs.准备构建.outputs.触发源 }}
+          - 构建时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+          - 提交: ${{ github.sha }}
+          
+          ### 安装包
+          
+          - Windows: .exe 安装程序
+          - macOS: .dmg 安装程序
+          EOF
+          
+          cat 发布说明.md
+
+      - name: 创建GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.准备构建.outputs.版本号 }}
+          name: 版本 v${{ needs.准备构建.outputs.版本号 }}
+          body_path: 发布说明.md
+          files: 构建产物/**/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  处理构建失败:
+    runs-on: ubuntu-latest
+    needs: [构建Windows, 构建macOS]
+    if: failure()
+    steps:
+      - name: 发送构建失败通知
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueBody = `## ❌ 构建失败
+            
+            构建工作流执行失败，需要手动检查。
+            
+            **仓库**: ${context.repo.owner}/${context.repo.repo}
+            **工作流**: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}
+            **触发源**: ${{ needs.准备构建.outputs.触发源 }}
+            
+            请查看工作流日志并解决问题。`;
+            
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `构建失败 - ${new Date().toLocaleDateString('zh-CN')}`,
+              body: issueBody,
+              labels: ['build-failed', 'bug', 'manual-required']
+            });
+
+      - name: 生成失败报告
+        run: |
+          echo "## ❌ 构建失败" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "构建过程中发生错误，请检查日志。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "[查看详细日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+  生成成功报告:
+    runs-on: ubuntu-latest
+    needs: [准备构建, 构建Windows, 构建macOS]
+    if: success()
+    steps:
+      - name: 生成成功报告
+        run: |
+          echo "## ✅ 构建完成" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "构建已成功完成！" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.准备构建.outputs.需要发布 }}" = "true" ]; then
+            echo "### 🚀 已创建发布" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "版本: v${{ needs.准备构建.outputs.版本号 }}" >> $GITHUB_STEP_SUMMARY
+            echo "更新说明: ${{ needs.准备构建.outputs.更新说明 }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### 📦 构建产物已上传" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "构建产物已保存为Artifacts，可在工作流运行页面下载。" >> $GITHUB_STEP_SUMMARY
+          fi
