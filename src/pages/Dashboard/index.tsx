@@ -27,7 +27,7 @@ import clsx from 'clsx';
 import { themeHex, themeAlpha, dataColor } from '@/utils/theme-colors';
 
 import {
-  ContextRing, QuickAction, SessionItem, FeedItem, AgentItem,
+  ContextRing, QuickAction, SessionItem, FeedItem, AgentItem, HealthCard,
   fmtTokens, fmtCost, fmtCostShort, timeAgo, fmtUptime,
 } from './components';
 
@@ -89,6 +89,7 @@ export function DashboardPage() {
   const sessions  = useGatewayDataStore((s) => s.sessions);
   const costData  = useGatewayDataStore((s) => s.costSummary);
   const usageData = useGatewayDataStore((s) => s.sessionsUsage);
+  const health    = useGatewayDataStore((s) => s.health);
 
   const [quickActionLoading, setQuickActionLoading] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -502,6 +503,11 @@ export function DashboardPage() {
 
       {/* ════ SECTION 4: BOTTOM ROW (3 columns) ════ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+        {/* ── System Health ── */}
+        <GlassCard delay={0.18}>
+          <HealthCard health={health} connected={connected} />
+        </GlassCard>
 
         {/* ── Quick Actions ── */}
         <GlassCard delay={0.20}>

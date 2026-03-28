@@ -30,11 +30,18 @@ const CLAWHUB_API = 'https://clawhub.ai/api/v1';
 
 async function fetchHubSkills(sort = 'downloads', limit = 30): Promise<HubSkill[]> {
   try {
+    // Try /skills endpoint first
     const res = await fetch(`${CLAWHUB_API}/skills?sort=${sort}&limit=${limit}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    // API returns { items: [...], nextCursor }
-    return (data.items || data.skills || []).map(mapHubSkill);
+    const items = (data.items || data.skills || []).map(mapHubSkill);
+    if (items.length > 0) return items;
+
+    // Fallback: /search endpoint returns results when /skills is empty
+    const searchRes = await fetch(`${CLAWHUB_API}/search?q=skill`);
+    if (!searchRes.ok) return [];
+    const searchData = await searchRes.json();
+    return (searchData.results || []).map(mapHubSkill);
   } catch (err) {
     console.warn('[Skills] ClawHub fetch failed:', err);
     return [];
@@ -233,6 +240,23 @@ export function SkillsPage() {
     if (!searchQuery.trim() && activeTab === 'hub') loadHubSkills();
   }, [searchQuery]); // eslint-disable-line
 
+  // ── Filter installed skills by status ──
+  const [myFilter, setMyFilter] = useState<'all' | 'ready' | 'needs-setup' | 'disabled'>('all');
+
+  const filteredMy = useMemo(() => {
+    if (myFilter === 'all') return mySkills;
+    if (myFilter === 'disabled') return mySkills.filter(s => !s.enabled);
+    if (myFilter === 'ready') return mySkills.filter(s => s.enabled);
+    // needs-setup: placeholder — currently no way to detect from skills.status
+    return mySkills;
+  }, [mySkills, myFilter]);
+
+  const myCounts = useMemo(() => ({
+    all: mySkills.length,
+    ready: mySkills.filter(s => s.enabled).length,
+    disabled: mySkills.filter(s => !s.enabled).length,
+  }), [mySkills]);
+
   // ── Filtered hub skills ──
   const filteredHub = useMemo(() => {
     if (activeCat === 'all') return hubSkills;
@@ -322,26 +346,90 @@ export function SkillsPage() {
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
             >
+              {/* Status filter tabs */}
+              <div className="flex gap-1 mb-4">
+                {(['all', 'ready', 'disabled'] as const).map((key) => (
+                  <button key={key} onClick={() => setMyFilter(key)}
+                    className={clsx(
+                      'px-3 py-1.5 rounded-lg text-[11px] font-medium border transition-all',
+                      myFilter === key
+                        ? 'bg-aegis-primary/10 text-aegis-primary border-aegis-primary/20'
+                        : 'bg-[rgb(var(--aegis-overlay)/0.03)] text-aegis-text-muted border-transparent hover:bg-[rgb(var(--aegis-overlay)/0.06)]'
+                    )}>
+                    {key === 'all' ? 'All' : key === 'ready' ? '✅ Ready' : 'Disabled'}
+                    <span className="ml-1 opacity-60 text-[9px]">{myCounts[key as keyof typeof myCounts] ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+
               {loadingMy ? (
                 <div className="flex items-center justify-center py-20">
                   <Loader2 size={22} className="animate-spin text-aegis-text-dim" />
                 </div>
-              ) : mySkills.length === 0 ? (
+              ) : filteredMy.length === 0 ? (
                 <div className="text-center py-20">
                   <div className="text-[32px] mb-3">📦</div>
                   <p className="text-[13px] text-aegis-text-dim font-medium">{t('skills.noSkills')}</p>
                   <p className="text-[11px] text-aegis-text-dim/60 mt-1">{t('skills.noSkillsHint')}</p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-0">
-                  {mySkills.map((skill, idx) => (
-                    <MySkillRow
-                      key={skill.slug}
-                      skill={skill}
-                      index={idx}
-                      onToggle={() => toggleSkill(skill.slug)}
-                    />
-                  ))}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {filteredMy.map((skill) => {
+                    const isDisabled = !skill.enabled;
+                    return (
+                      <div key={skill.slug}
+                        className={clsx(
+                          'p-4 rounded-xl border transition-all',
+                          isDisabled
+                            ? 'bg-[rgb(var(--aegis-overlay)/0.01)] border-[rgb(var(--aegis-overlay)/0.04)] opacity-50'
+                            : 'bg-[rgb(var(--aegis-overlay)/0.02)] border-[rgb(var(--aegis-overlay)/0.06)] hover:border-[rgb(var(--aegis-overlay)/0.12)]'
+                        )}>
+                        {/* Top: emoji + name + status badge */}
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[13px] font-semibold text-aegis-text flex items-center gap-1.5">
+                            <span className="text-[16px]">{skill.emoji}</span>
+                            {skill.name}
+                          </span>
+                          <span className={clsx('text-[9px] px-2 py-0.5 rounded-full font-semibold',
+                            skill.enabled ? 'bg-emerald-500/12 text-emerald-400' : 'bg-zinc-500/12 text-zinc-500'
+                          )}>
+                            {skill.enabled ? '✅ Ready' : 'Disabled'}
+                          </span>
+                        </div>
+
+                        {/* Description */}
+                        <div className="text-[11px] text-aegis-text-muted leading-relaxed mb-2 line-clamp-2">
+                          {skill.description}
+                        </div>
+
+                        {/* Meta: source + version */}
+                        <div className="flex items-center gap-2 mb-3 text-[10px] text-aegis-text-dim">
+                          <span className={clsx('px-1.5 py-0.5 rounded font-medium text-[9px]',
+                            skill.source === 'clawhub' ? 'bg-purple-500/10 text-purple-400'
+                            : skill.source === 'local' ? 'bg-teal-500/10 text-teal-400'
+                            : 'bg-blue-500/10 text-blue-400'
+                          )}>
+                            {skill.source === 'clawhub' ? 'ClawHub' : skill.source === 'local' ? 'Custom' : 'Built-in'}
+                          </span>
+                          <span className="font-mono">v{skill.version}</span>
+                        </div>
+
+                        {/* Actions: toggle */}
+                        <div className="flex items-center gap-2 pt-2 border-t border-[rgb(var(--aegis-overlay)/0.04)]">
+                          <button onClick={() => toggleSkill(skill.slug)}
+                            className={clsx(
+                              'w-8 h-[18px] rounded-full relative transition-colors',
+                              skill.enabled ? 'bg-aegis-primary/40' : 'bg-[rgb(var(--aegis-overlay)/0.1)]'
+                            )}>
+                            <div className={clsx(
+                              'w-[14px] h-[14px] rounded-full bg-white absolute top-[2px] transition-all',
+                              skill.enabled ? 'left-[16px]' : 'left-[2px]'
+                            )} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </motion.div>

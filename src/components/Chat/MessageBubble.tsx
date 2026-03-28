@@ -322,7 +322,7 @@ export const MessageBubble = memo(function MessageBubble({ block, onResend, onRe
       )}
 
       {/* Message Content */}
-      <div className={clsx('flex flex-col min-w-0', isUser ? 'items-end max-w-[80%]' : expanded ? 'max-w-full w-full mx-0' : 'max-w-[80%]')}>
+      <div className={clsx('flex flex-col min-w-0 overflow-hidden', isUser ? 'items-end max-w-[80%]' : expanded ? 'max-w-full w-full mx-0' : 'max-w-[80%]')}>
         {/* Bubble */}
         <div
           className={clsx(

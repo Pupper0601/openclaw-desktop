@@ -6,6 +6,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [5.7.0] — 2026-03-26
+
+### Added
+- **Global Exec Approvals** — approval bar now visible on ALL pages (not just Chat). Badge in TitleBar shows pending count.
+- **Notification Center** — bell icon in TitleBar with slide-out drawer. Persistent history (max 200), filter tabs (All/Errors/Approvals/Cron/System), mark read/clear.
+- **Dashboard Health Card** — system health overview: Gateway version, uptime, model, active sessions, channel statuses.
+- **Session Manager Upgrade** — full rewrite with search, type filters (DM/Cron/Sub-agent/Group), reset/delete/cleanup actions, message preview drawer, confirmation dialogs.
+- **MCP Tools Upgrade** — powered by Gateway `tools.catalog` + `tools.effective` APIs. Grouped by source (Core/Plugin/Channel), active/inactive indicators.
+- **Multi-Agent Actions** — steer (send instruction) and kill sub-agents directly from the UI.
+- **Logs Viewer Upgrade** — search, level filter (Error/Warn/Info/Debug), time range selector, live tail with auto-scroll.
+- **Skills Page** — card grid design for installed skills with status badges (Ready/Disabled), toggle switches, filter tabs. ClawHub marketplace preserved.
+- **Sidebar Sections** — organized into Main/Monitor/Tools/More with visual dividers.
+- **Memory Explorer Stats** — stats bar showing total memories, messages, KG relations, embedding coverage from AEGIS DB.
+- **Device Auth v3** — signature now includes `platform` + `deviceFamily` for stronger binding.
+- **Dynamic Model Names** — TitleBar checks `models.list` aliases before falling back to hardcoded patterns. Added Haiku 4.5, Gemini Flash, GPT-5, Kimi K2, Llama 3, Qwen.
+
+### Fixed
+- **autoInlineCode URLs** — URLs inside markdown links no longer broken by inline code detection. Uses placeholder protection.
+- **Heartbeat messages** — filtered from chat display. `HEARTBEAT_OK` with trailing diagnostic text now hidden.
+- **Reasoning/Thinking bubble** — now appears immediately after response (fixed race condition: `thinkingText` read before `onStreamEnd` clears it).
+- **Gateway polling** — `sessions.usage` and `usage.cost` interval increased from 120s to 300s (these APIs take 20-60s each).
+
+### Security
+- **Removed `NODE_TLS_REJECT_UNAUTHORIZED=0`** — was disabling all SSL certificate validation. Not needed for local-only design (CodeQL Alert #3 resolved).
+- **Gateway crash protection** — added `--unhandled-rejections=warn` to entrypoint to prevent Discord Carbon uncaught exceptions from killing the container.
+
+### Changed
+- **Issue #16 closed** — WSS via reverse proxy officially unsupported (local-only by design).
+
 ## [5.6.1] — 2026-03-24
 
 ### Added

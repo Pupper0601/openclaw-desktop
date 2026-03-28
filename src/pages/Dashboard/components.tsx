@@ -5,8 +5,9 @@
 // ═══════════════════════════════════════════════════════════
 
 import { motion } from 'framer-motion';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Activity, Radio, Clock, Bot, Wifi, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
+import type { HealthInfo } from '@/stores/gatewayDataStore';
 import { themeHex } from '@/utils/theme-colors';
 
 // ── Format helpers (shared with index.tsx) ──────────────────
@@ -222,4 +223,92 @@ export function AgentItem({ emoji, name, model, cost, costToday, maxCost, isFree
       </div>
     </div>
   );
+}
+
+// ═══════════════════════════════════════════════════════════
+// HealthCard — System health overview for Dashboard
+// ═══════════════════════════════════════════════════════════
+
+function fmtUptime2(seconds?: number): string {
+  if (!seconds) return '—';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  }
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  return h > 0 ? `${d}d ${h}h` : `${d}d`;
+}
+
+export function HealthCard({ health, connected }: { health: HealthInfo | null; connected: boolean }) {
+  const stats = [
+    { icon: Clock,    label: 'Uptime',    value: fmtUptime2(health?.uptime) },
+    { icon: Bot,      label: 'Model',     value: health?.model?.split('/').pop() || '—' },
+    { icon: Activity, label: 'Sessions',  value: health?.activeSessions != null ? `${health.activeSessions} active` : '—' },
+    { icon: Radio,    label: 'Heartbeat', value: health?.lastHeartbeat ? fmtHbAgo(health.lastHeartbeat) : '—' },
+  ];
+
+  const channels = health?.channels || [];
+
+  return (
+    <div className="rounded-xl border border-aegis-border bg-aegis-card p-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold text-aegis-text">🏥 System Health</span>
+          {health?.version && (
+            <span className="text-[10px] font-mono text-aegis-text-dim px-1.5 py-0.5 rounded bg-[rgb(var(--aegis-overlay)/0.04)] border border-[rgb(var(--aegis-overlay)/0.06)]">
+              v{health.version}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className={clsx(
+            'w-2 h-2 rounded-full',
+            connected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(34,197,94,0.4)] animate-pulse' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]'
+          )} />
+          <span className={clsx('text-[11px] font-medium', connected ? 'text-emerald-400' : 'text-red-400')}>
+            {connected ? 'Connected' : 'Disconnected'}
+          </span>
+        </div>
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        {stats.map((s) => (
+          <div key={s.label} className="flex items-center gap-2 px-2.5 py-2 rounded-lg bg-[rgb(var(--aegis-overlay)/0.02)] border border-[rgb(var(--aegis-overlay)/0.04)]">
+            <s.icon size={14} className="text-aegis-text-dim shrink-0" />
+            <div>
+              <div className="text-[9px] text-aegis-text-dim uppercase tracking-wider">{s.label}</div>
+              <div className="text-[12px] font-semibold text-aegis-text font-mono">{s.value}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Channels */}
+      {channels.length > 0 && (
+        <div className="pt-2 border-t border-[rgb(var(--aegis-overlay)/0.04)]">
+          <div className="text-[9px] text-aegis-text-dim uppercase tracking-wider mb-2">Channels</div>
+          <div className="flex flex-wrap gap-1.5">
+            {channels.map((ch, i) => (
+              <div key={i} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.06)] text-[11px]">
+                <div className={clsx('w-1.5 h-1.5 rounded-full', ch.status === 'connected' || ch.status === 'ready' ? 'bg-emerald-500' : 'bg-red-500')} />
+                <span className="text-aegis-text-muted">{ch.name}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtHbAgo(ts: string): string {
+  const diff = Date.now() - new Date(ts).getTime();
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  return `${Math.floor(diff / 3_600_000)}h ago`;
 }

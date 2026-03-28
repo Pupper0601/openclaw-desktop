@@ -1,409 +1,298 @@
 // ═══════════════════════════════════════════════════════════
-// LogsViewer — Live Gateway Session Logs
-// Header: session selector + refresh + auto-refresh toggle
-// Body: scrollable monospace log entries with level badges
+// LogsViewer — Gateway log viewer with search, level filter, live tail
 // ═══════════════════════════════════════════════════════════
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ScrollText, RefreshCw, Loader2, ChevronDown, Pause, Play } from 'lucide-react';
+import { ScrollText, RefreshCw, Loader2, Search, Radio } from 'lucide-react';
 import { PageTransition } from '@/components/shared/PageTransition';
-import { useGatewayDataStore } from '@/stores/gatewayDataStore';
 import { gateway } from '@/services/gateway/index';
 import clsx from 'clsx';
 
-// ── Types ─────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────
 
 interface LogEntry {
-  ts?: string;
-  timestamp?: string;
-  level?: string;
-  msg?: string;
-  message?: string;
-  [k: string]: unknown;
+  timestamp: string;
+  level: 'error' | 'warn' | 'info' | 'debug' | string;
+  source: string;
+  message: string;
 }
 
-// ── Constants ─────────────────────────────────────────────
+type LogLevel = 'all' | 'error' | 'warn' | 'info' | 'debug';
+type TimeRange = '1h' | '6h' | '24h' | 'all';
 
-const DEFAULT_SESSION = 'agent:main:main';
-const AUTO_REFRESH_INTERVAL = 5000; // ms
+// ── Helpers ──────────────────────────────────────────────
 
-// ── Helpers ───────────────────────────────────────────────
+function parseLogLine(raw: string): LogEntry | null {
+  // Try JSON format first: { "0": "subsystem", "1": "message", "_meta": { "logLevelName": "INFO", "date": "..." } }
+  try {
+    const obj = JSON.parse(raw);
+    if (obj._meta) {
+      const time = obj._meta.date || obj.time || '';
+      const level = (obj._meta.logLevelName || 'info').toLowerCase();
+      const source = typeof obj['0'] === 'string' && obj['0'].startsWith('{')
+        ? (JSON.parse(obj['0']).subsystem || '').replace('gateway/', '')
+        : String(obj['0'] || '');
+      const message = typeof obj['1'] === 'string' ? obj['1'] : JSON.stringify(obj['1'] || '');
+      return { timestamp: time, level, source: `[${source}]`, message };
+    }
+  } catch { /* not JSON */ }
 
-/** Format a session key into a human-readable label */
-function formatSessionKey(key: string): string {
-  if (!key) return key;
-  if (key === 'agent:main:main') return 'Main';
-  const parts = key.split(':');
-  const last = parts[parts.length - 1];
-  // Truncate UUID-like suffixes
-  if (last.length === 36 && last.includes('-')) {
-    const parent = parts[parts.length - 2] || last;
-    return parent.charAt(0).toUpperCase() + parent.slice(1);
-  }
-  return last.charAt(0).toUpperCase() + last.slice(1);
+  // Try plain text format: timestamp [source] LEVEL message
+  const m = raw.match(/(\d{2}:\d{2}:\d{2})\s+\[(\w+)\]\s+(\w+)\s+(.*)/);
+  if (m) return { timestamp: m[1], level: m[3].toLowerCase(), source: `[${m[2]}]`, message: m[4] };
+
+  // Fallback: treat as info
+  if (raw.trim()) return { timestamp: '', level: 'info', source: '', message: raw.trim() };
+  return null;
 }
 
-/** Parse a timestamp string into HH:MM:SS.mmm */
-function formatTimestamp(ts: string | undefined): string {
-  if (!ts) return '??:??:??.???';
+function formatTime(ts: string): string {
+  if (!ts) return '';
   try {
     const d = new Date(ts);
-    if (isNaN(d.getTime())) return ts;
-    const hh = String(d.getHours()).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    const ms = String(d.getMilliseconds()).padStart(3, '0');
-    return `${hh}:${mm}:${ss}.${ms}`;
-  } catch {
-    return ts;
+    if (isNaN(d.getTime())) return ts.substring(0, 8);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch { return ts.substring(0, 8); }
+}
+
+function levelClass(level: string): string {
+  switch (level) {
+    case 'error': return 'text-red-400 bg-red-500/8';
+    case 'warn': return 'text-amber-400 bg-amber-500/8';
+    case 'info': return 'text-blue-400 bg-blue-500/8';
+    case 'debug': return 'text-zinc-500 bg-zinc-500/5';
+    default: return 'text-zinc-400 bg-zinc-500/5';
   }
 }
 
-/** Normalise a raw log entry from any gateway response shape */
-function normaliseEntry(raw: unknown, idx: number): LogEntry & { _id: number } {
-  if (typeof raw === 'string') {
-    return { _id: idx, msg: raw };
+function msgClass(level: string): string {
+  switch (level) {
+    case 'error': return 'text-red-300';
+    case 'warn': return 'text-amber-200/80';
+    default: return 'text-aegis-text-muted';
   }
-  if (typeof raw === 'object' && raw !== null) {
-    return { _id: idx, ...(raw as LogEntry) };
+}
+
+function msAgo(range: TimeRange): number {
+  switch (range) {
+    case '1h': return 3_600_000;
+    case '6h': return 21_600_000;
+    case '24h': return 86_400_000;
+    default: return Infinity;
   }
-  return { _id: idx, msg: String(raw) };
 }
 
-// ── Sub-components ────────────────────────────────────────
-
-/** Level badge: info / warn / error → colour */
-function LevelBadge({ level }: { level?: string }) {
-  const l = (level || 'info').toLowerCase();
-  const cls = clsx(
-    'inline-flex items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider select-none shrink-0',
-    {
-      'bg-aegis-danger-surface text-aegis-danger':   l === 'error' || l === 'fatal' || l === 'err',
-      'bg-aegis-warning-surface text-aegis-warning': l === 'warn' || l === 'warning',
-      'bg-[rgb(var(--aegis-accent)/0.1)] text-aegis-accent': l === 'debug' || l === 'trace' || l === 'verbose',
-      'bg-aegis-elevated text-aegis-text-muted':     l === 'info' || (l !== 'error' && l !== 'fatal' && l !== 'err' && l !== 'warn' && l !== 'warning' && l !== 'debug' && l !== 'trace' && l !== 'verbose'),
-    }
-  );
-  return <span className={cls}>{l.slice(0, 4)}</span>;
-}
-
-/** Single log row */
-function LogRow({ entry }: { entry: LogEntry & { _id: number } }) {
-  const ts  = entry.ts || entry.timestamp;
-  const msg = entry.msg || entry.message || JSON.stringify(entry);
-
-  return (
-    <div className="flex items-start gap-2 py-0.5 px-3 hover:bg-aegis-surface rounded transition-colors">
-      {/* Timestamp */}
-      <span className="font-mono text-[11px] text-aegis-text-dim shrink-0 pt-0.5 tabular-nums">
-        {formatTimestamp(ts)}
-      </span>
-      {/* Level */}
-      <LevelBadge level={entry.level} />
-      {/* Message */}
-      <span className="font-mono text-[12px] text-aegis-text break-all whitespace-pre-wrap leading-relaxed">
-        {msg}
-      </span>
-    </div>
-  );
-}
-
-// ── Session Dropdown ──────────────────────────────────────
-
-interface SessionDropdownProps {
-  sessions: { key: string; label: string }[];
-  selected: string;
-  onSelect: (key: string) => void;
-}
-
-function SessionDropdown({ sessions, selected, onSelect }: SessionDropdownProps) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  const selectedLabel = sessions.find(s => s.key === selected)?.label ?? formatSessionKey(selected);
-
-  // Close on outside click
-  useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    }
-    if (open) document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [open]);
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={clsx(
-          'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all',
-          'bg-aegis-elevated hover:bg-aegis-elevated border border-aegis-border-hover text-aegis-text',
-        )}
-      >
-        <span className="max-w-[180px] truncate">{selectedLabel}</span>
-        <ChevronDown size={14} className={clsx('text-aegis-text-muted transition-transform', open && 'rotate-180')} />
-      </button>
-
-      {open && (
-        <div className={clsx(
-          'absolute top-full mt-1.5 z-50 min-w-[220px] max-h-72 overflow-y-auto',
-          'rounded-xl border border-aegis-border-hover bg-[#1a1a2e]/95 backdrop-blur-xl shadow-2xl',
-        )}>
-          {sessions.length === 0 ? (
-            <div className="px-4 py-3 text-sm text-aegis-text-muted italic">No sessions found</div>
-          ) : (
-            sessions.map(s => (
-              <button
-                key={s.key}
-                onClick={() => { onSelect(s.key); setOpen(false); }}
-                className={clsx(
-                  'w-full flex flex-col items-start px-4 py-2.5 text-sm transition-colors',
-                  s.key === selected
-                    ? 'bg-aegis-elevated text-aegis-text'
-                    : 'text-aegis-text-secondary hover:bg-aegis-surface hover:text-aegis-text',
-                )}
-              >
-                <span className="font-medium truncate max-w-full">{s.label}</span>
-                <span className="text-[11px] text-aegis-text-dim font-mono truncate max-w-full">{s.key}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main Page ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════
+// Main Component
+// ═══════════════════════════════════════════════════════════
 
 export function LogsViewerPage() {
   const { t } = useTranslation();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [levelFilter, setLevelFilter] = useState<LogLevel>('all');
+  const [timeRange, setTimeRange] = useState<TimeRange>('24h');
+  const [liveTail, setLiveTail] = useState(false);
+  const listRef = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── State ──────────────────────────────────────────────
-  const [selectedKey, setSelectedKey]   = useState<string>(DEFAULT_SESSION);
-  const [logs, setLogs]                 = useState<(LogEntry & { _id: number })[]>([]);
-  const [loading, setLoading]           = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [autoRefresh, setAutoRefresh]   = useState(false);
-  const [lastFetch, setLastFetch]       = useState<number | null>(null);
-
-  const scrollRef      = useRef<HTMLDivElement>(null);
-  const intervalRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevLogsLen    = useRef<number>(0);
-
-  // ── Store data ─────────────────────────────────────────
-  const storeSessions = useGatewayDataStore(s => s.sessions);
-
-  const sessionOptions = storeSessions.map(s => ({
-    key: s.key || '',
-    label: formatSessionKey(s.key || '') || s.label || s.key || '',
-  }));
-
-  // Ensure DEFAULT_SESSION always appears even if not in store
-  if (selectedKey === DEFAULT_SESSION && !sessionOptions.find(s => s.key === DEFAULT_SESSION)) {
-    sessionOptions.unshift({ key: DEFAULT_SESSION, label: 'Main' });
-  }
-
-  // ── Fetch ──────────────────────────────────────────────
-  const fetchLogs = useCallback(async (key: string) => {
-    if (!key) return;
-    setLoading(true);
-    setError(null);
+  // Fetch logs
+  const fetchLogs = useCallback(async () => {
     try {
-      const result: unknown = await gateway.getSessionLogs(key, 200);
+      const res = await gateway.call('logs.tail', { limit: 500 });
+      const raw: string[] = Array.isArray(res?.lines) ? res.lines
+        : typeof res === 'string' ? res.split('\n')
+        : Array.isArray(res) ? res
+        : [];
 
-      // Normalise response — gateway may return array or object with .logs / .entries
-      let raw: unknown[] = [];
-      if (Array.isArray(result)) {
-        raw = result;
-      } else if (result && typeof result === 'object') {
-        const r = result as Record<string, unknown>;
-        if (Array.isArray(r.logs))    raw = r.logs;
-        else if (Array.isArray(r.entries)) raw = r.entries;
-        else if (Array.isArray(r.data))    raw = r.data;
-      }
+      const parsed = raw
+        .map((line: any) => parseLogLine(typeof line === 'string' ? line : JSON.stringify(line)))
+        .filter(Boolean) as LogEntry[];
 
-      const entries = raw.map((e, i) => normaliseEntry(e, i));
-      setLogs(entries);
-      setLastFetch(Date.now());
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setLogs(parsed);
+    } catch {
+      // Fallback: empty
       setLogs([]);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, []);
 
-  // ── Initial fetch + session change ────────────────────
   useEffect(() => {
-    void fetchLogs(selectedKey);
-  }, [selectedKey, fetchLogs]);
+    fetchLogs();
+  }, [fetchLogs]);
 
-  // ── Auto-refresh ──────────────────────────────────────
+  // Live tail polling
   useEffect(() => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (autoRefresh) {
-      intervalRef.current = setInterval(() => void fetchLogs(selectedKey), AUTO_REFRESH_INTERVAL);
+    if (liveTail) {
+      pollRef.current = setInterval(fetchLogs, 5000);
+    } else if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [autoRefresh, selectedKey, fetchLogs]);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [liveTail, fetchLogs]);
 
-  // ── Scroll to bottom on new logs ──────────────────────
+  // Auto-scroll on live tail
   useEffect(() => {
-    if (logs.length !== prevLogsLen.current) {
-      prevLogsLen.current = logs.length;
-      if (scrollRef.current) {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (liveTail && listRef.current) {
+      listRef.current.scrollTop = listRef.current.scrollHeight;
+    }
+  }, [logs, liveTail]);
+
+  // Filter
+  const filtered = useMemo(() => {
+    const now = Date.now();
+    const rangeMs = msAgo(timeRange);
+    const q = search.toLowerCase();
+
+    return logs.filter((entry) => {
+      // Level filter
+      if (levelFilter !== 'all' && entry.level !== levelFilter) return false;
+
+      // Time range
+      if (rangeMs < Infinity && entry.timestamp) {
+        try {
+          const t = new Date(entry.timestamp).getTime();
+          if (now - t > rangeMs) return false;
+        } catch { /* keep */ }
       }
-    }
-  }, [logs]);
 
-  // ── Handlers ──────────────────────────────────────────
-  const handleSessionChange = (key: string) => {
-    setSelectedKey(key);
-    setLogs([]);
-    setError(null);
-  };
+      // Search
+      if (q && !entry.message.toLowerCase().includes(q) && !entry.source.toLowerCase().includes(q)) return false;
 
-  const handleRefresh = () => {
-    void fetchLogs(selectedKey);
-  };
+      return true;
+    });
+  }, [logs, levelFilter, timeRange, search]);
 
-  // ── Render ─────────────────────────────────────────────
+  const levels: LogLevel[] = ['all', 'error', 'warn', 'info', 'debug'];
+  const timeRanges: { key: TimeRange; label: string }[] = [
+    { key: '1h', label: 'Last 1h' },
+    { key: '6h', label: 'Last 6h' },
+    { key: '24h', label: 'Last 24h' },
+    { key: 'all', label: 'All' },
+  ];
+
   return (
-    <PageTransition className="flex flex-col h-full">
-      {/* ── Header ── */}
-      <div className="flex items-center gap-3 px-5 py-3.5 border-b border-aegis-border shrink-0 flex-wrap">
-        {/* Title */}
-        <div className="flex items-center gap-2 mr-1">
-          <ScrollText size={18} className="text-aegis-text-muted" />
-          <h1 className="text-base font-semibold text-aegis-text tracking-tight">
-            {t('logsViewer.title', 'Logs')}
-          </h1>
+    <PageTransition>
+      <div className="p-6 flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h1 className="text-[18px] font-bold text-aegis-text flex items-center gap-2">
+              <ScrollText size={20} /> Gateway Logs
+            </h1>
+            <p className="text-[12px] text-aegis-text-dim mt-0.5">
+              {filtered.length} entries{logs.length !== filtered.length ? ` (${logs.length} total)` : ''}
+            </p>
+          </div>
+          <button
+            onClick={() => { setLoading(true); fetchLogs(); }}
+            disabled={loading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] text-aegis-text-muted bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] hover:bg-[rgb(var(--aegis-overlay)/0.06)] transition-colors"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} /> Refresh
+          </button>
         </div>
 
-        {/* Session selector */}
-        <SessionDropdown
-          sessions={sessionOptions}
-          selected={selectedKey}
-          onSelect={handleSessionChange}
-        />
-
-        {/* Spacer */}
-        <div className="flex-1" />
-
-        {/* Last fetch time */}
-        {lastFetch && (
-          <span className="text-[11px] text-aegis-text-dim tabular-nums hidden sm:block">
-            {t('logsViewer.fetched', 'Fetched')} {new Date(lastFetch).toLocaleTimeString()}
-          </span>
-        )}
-
-        {/* Auto-refresh toggle */}
-        <button
-          onClick={() => setAutoRefresh(a => !a)}
-          title={autoRefresh ? t('logsViewer.pauseAutoRefresh', 'Pause auto-refresh') : t('logsViewer.startAutoRefresh', 'Enable auto-refresh (5s)')}
-          className={clsx(
-            'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border',
-            autoRefresh
-              ? 'bg-aegis-success-surface border-emerald-500/30 text-aegis-success hover:bg-aegis-success-surface'
-              : 'bg-aegis-surface border-aegis-border-hover text-aegis-text-muted hover:bg-aegis-elevated hover:text-aegis-text-secondary',
-          )}
-        >
-          {autoRefresh
-            ? <><Pause size={13} /><span className="hidden sm:inline">{t('logsViewer.pause', 'Pause')}</span></>
-            : <><Play  size={13} /><span className="hidden sm:inline">{t('logsViewer.live', 'Live')}</span></>
-          }
-        </button>
-
-        {/* Manual refresh */}
-        <button
-          onClick={handleRefresh}
-          disabled={loading}
-          title={t('logsViewer.refresh', 'Refresh')}
-          className="flex items-center justify-center w-8 h-8 rounded-lg bg-aegis-surface border border-aegis-border-hover text-aegis-text-muted hover:bg-aegis-elevated hover:text-aegis-text-secondary transition-all disabled:opacity-40"
-        >
-          {loading
-            ? <Loader2 size={14} className="animate-spin" />
-            : <RefreshCw size={14} />
-          }
-        </button>
-      </div>
-
-      {/* ── Body ── */}
-      <div
-        ref={scrollRef}
-        className="flex-1 overflow-y-auto py-2 min-h-0"
-      >
-        {/* Loading skeleton */}
-        {loading && logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 text-aegis-text-dim">
-            <Loader2 size={24} className="animate-spin" />
-            <span className="text-sm">{t('logsViewer.loading', 'Loading logs…')}</span>
+        {/* Toolbar */}
+        <div className="flex gap-2 mb-3 items-center flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-aegis-text-dim" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter logs..."
+              className="w-full pl-9 pr-3 py-2 rounded-lg text-[12px] font-mono bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text placeholder:text-aegis-text-dim/40 outline-none focus:border-aegis-primary/30"
+            />
           </div>
-        )}
 
-        {/* Error / no data */}
-        {!loading && error && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
-            <ScrollText size={28} className="text-aegis-text-dim" />
-            <p className="text-sm text-aegis-text-muted font-medium">
-              {t('logsViewer.noLogs', 'No logs available')}
-            </p>
-            <p className="text-xs text-aegis-text-dim max-w-sm">
-              {t('logsViewer.rpcNote', 'The RPC endpoint sessions.usage.logs may not be supported by your gateway version, or the session has no logs yet.')}
-            </p>
-            <p className="text-xs font-mono text-aegis-danger/60 bg-aegis-danger-surface rounded px-3 py-1.5 max-w-sm break-all">
-              {error}
-            </p>
-          </div>
-        )}
-
-        {/* Empty — no error, just empty array */}
-        {!loading && !error && logs.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full gap-3 px-6 text-center">
-            <ScrollText size={28} className="text-aegis-text-dim" />
-            <p className="text-sm text-aegis-text-muted">
-              {t('logsViewer.empty', 'No log entries for this session.')}
-            </p>
-            <p className="text-xs text-aegis-text-dim max-w-sm">
-              {t('logsViewer.emptyNote', 'The sessions.usage.logs RPC may not be supported by your gateway version, or the session has no recorded logs.')}
-            </p>
-          </div>
-        )}
-
-        {/* Log entries */}
-        {logs.length > 0 && (
-          <div className="space-y-0.5">
-            {logs.map(entry => (
-              <LogRow key={entry._id} entry={entry} />
+          {/* Level pills */}
+          <div className="flex gap-1">
+            {levels.map((lvl) => (
+              <button
+                key={lvl}
+                onClick={() => setLevelFilter(lvl)}
+                className={clsx(
+                  'px-2.5 py-1.5 rounded-md text-[10px] font-semibold border transition-all',
+                  levelFilter === lvl
+                    ? lvl === 'error' ? 'bg-red-500/10 text-red-400 border-red-500/20'
+                    : lvl === 'warn' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                    : 'bg-aegis-primary/10 text-aegis-primary border-aegis-primary/20'
+                    : 'bg-[rgb(var(--aegis-overlay)/0.03)] text-aegis-text-muted border-transparent hover:bg-[rgb(var(--aegis-overlay)/0.06)]'
+                )}
+              >
+                {lvl.charAt(0).toUpperCase() + lvl.slice(1)}
+              </button>
             ))}
-            {/* Loading spinner at bottom during auto-refresh */}
-            {loading && (
-              <div className="flex items-center gap-2 px-3 py-1 text-aegis-text-dim">
-                <Loader2 size={12} className="animate-spin" />
-                <span className="text-[11px] font-mono">{t('logsViewer.refreshing', 'Refreshing…')}</span>
-              </div>
-            )}
           </div>
-        )}
-      </div>
 
-      {/* ── Status bar ── */}
-      <div className="shrink-0 flex items-center gap-3 px-5 py-1.5 border-t border-aegis-border text-[11px] text-aegis-text-dim font-mono">
-        <span>{logs.length} {t('logsViewer.entries', 'entries')}</span>
-        {autoRefresh && (
-          <>
-            <span className="w-px h-3 bg-aegis-border" />
-            <span className="text-aegis-success/60">{t('logsViewer.autoRefreshActive', 'auto-refresh 5s')}</span>
-          </>
-        )}
-        <span className="flex-1" />
-        <span className="truncate max-w-[260px] text-aegis-text-dim/60">{selectedKey}</span>
+          {/* Time range */}
+          <select
+            value={timeRange}
+            onChange={(e) => setTimeRange(e.target.value as TimeRange)}
+            className="px-2.5 py-1.5 rounded-md text-[11px] bg-[rgb(var(--aegis-overlay)/0.03)] border border-[rgb(var(--aegis-overlay)/0.08)] text-aegis-text-muted outline-none cursor-pointer"
+          >
+            {timeRanges.map((tr) => (
+              <option key={tr.key} value={tr.key}>{tr.label}</option>
+            ))}
+          </select>
+
+          {/* Live tail */}
+          <button
+            onClick={() => setLiveTail(!liveTail)}
+            className={clsx(
+              'flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[10px] font-medium border transition-all',
+              liveTail
+                ? 'bg-emerald-500/8 text-emerald-400 border-emerald-500/20'
+                : 'bg-[rgb(var(--aegis-overlay)/0.03)] text-aegis-text-muted border-[rgb(var(--aegis-overlay)/0.08)]'
+            )}
+          >
+            {liveTail && <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />}
+            <Radio size={10} />
+            Live Tail
+          </button>
+        </div>
+
+        {/* Log List */}
+        <div
+          ref={listRef}
+          className="flex-1 overflow-y-auto rounded-lg border border-[rgb(var(--aegis-overlay)/0.06)] bg-[rgb(var(--aegis-overlay)/0.01)] font-mono text-[11px] scrollbar-thin"
+        >
+          {loading ? (
+            <div className="flex items-center justify-center h-[200px]">
+              <Loader2 className="w-5 h-5 animate-spin text-aegis-primary/50" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-[200px] text-aegis-text-dim">
+              <ScrollText size={28} className="opacity-20 mb-2" />
+              <span className="text-[12px]">No log entries match your filters</span>
+            </div>
+          ) : (
+            filtered.map((entry, i) => (
+              <div
+                key={i}
+                className="flex gap-2 px-3 py-[3px] border-b border-[rgb(var(--aegis-overlay)/0.03)] hover:bg-[rgb(var(--aegis-overlay)/0.02)]"
+              >
+                <span className="text-aegis-text-dim/40 whitespace-nowrap min-w-[70px]">
+                  {formatTime(entry.timestamp)}
+                </span>
+                <span className={clsx('font-bold min-w-[45px] text-center px-1 rounded text-[10px]', levelClass(entry.level))}>
+                  {entry.level.toUpperCase()}
+                </span>
+                <span className="text-purple-400/70 min-w-[90px] truncate">
+                  {entry.source}
+                </span>
+                <span className={clsx('flex-1 break-all', msgClass(entry.level))}>
+                  {entry.message}
+                </span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </PageTransition>
   );

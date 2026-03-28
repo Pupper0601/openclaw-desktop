@@ -14,6 +14,7 @@ import { useWorkshopStore, Task } from '@/stores/workshopStore';
 import { parseButtons } from '@/utils/buttonParser';
 import i18n from '@/i18n';
 import { GatewayConnection, type MediaInfo } from './Connection';
+import { useNotificationStore } from '@/stores/notificationStore';
 import { APP_VERSION } from '@/hooks/useAppVersion';
 
 // ── AEGIS Desktop Client Context ──
@@ -410,8 +411,8 @@ export class ChatHandler {
    * but does NOT emit it via WebSocket. We fetch it and attach to the message.
    */
   private async fetchReasoningFromHistory(messageId: string) {
-    // Small delay to let the Gateway commit the transcript
-    await new Promise(r => setTimeout(r, 300));
+    // Delay to let the Gateway commit the transcript (300ms was too short for heavy sessions)
+    await new Promise(r => setTimeout(r, 1000));
 
     try {
       const result = await this.conn.request('chat.history', {
@@ -671,11 +672,29 @@ export class ChatHandler {
           cwd: req.cwd || null,
           expiresAt: p.expiresAtMs || (Date.now() + 120000),
         });
+        useNotificationStore.getState().addNotification({
+          category: 'exec-approval',
+          severity: 'warning',
+          title: 'Exec Approval Required',
+          body: req.command,
+          route: '/chat',
+          showToast: false, // Global bar already visible
+        });
       }
     }
     if (event === 'exec.approval.resolved') {
       const id = p?.id || p?.request?.id;
-      if (id) useChatStore.getState().removeExecApproval(id);
+      const decision = p?.decision || 'resolved';
+      if (id) {
+        useChatStore.getState().removeExecApproval(id);
+        useNotificationStore.getState().addNotification({
+          category: 'exec-approval',
+          severity: decision === 'deny' ? 'error' : 'success',
+          title: `Exec ${decision === 'deny' ? 'Denied' : 'Approved'}`,
+          body: p?.request?.command || p?.command || id,
+          showToast: false,
+        });
+      }
     }
 
     // ── Model fallback detection ──
@@ -686,6 +705,13 @@ export class ChatHandler {
       if (fromModel && toModel && fromModel !== toModel) {
         const reason = data.reasonSummary || data.reason;
         useChatStore.getState().setFallbackInfo({ from: fromModel, to: toModel, reason });
+        useNotificationStore.getState().addNotification({
+          category: 'model-fallback',
+          severity: 'warning',
+          title: 'Model Fallback',
+          body: `${fromModel} → ${toModel}${reason ? ': ' + reason : ''}`,
+          showToast: false, // Already shown in TitleBar fallback banner
+        });
         // Auto-clear after 15 seconds
         setTimeout(() => useChatStore.getState().setFallbackInfo(null), 15000);
       }
@@ -918,6 +944,12 @@ export class ChatHandler {
           useChatStore.getState().setQuickReplies([]);
         }
 
+        // Capture thinking state BEFORE onStreamEnd clears it.
+        // onStreamEnd → finalizeStreamingMessage copies thinkingText into
+        // message.thinkingContent and then resets thinkingText to ''.
+        // We must read it first to know if streaming already captured reasoning.
+        const hasThinking = useChatStore.getState().thinkingText;
+
         // Notify Voice Live response waiters first — if consumed, skip chat UI
         const consumed = resolveResponse(runId, finalText);
         if (!consumed) {
@@ -926,7 +958,6 @@ export class ChatHandler {
           // Post-finalization: fetch reasoning from transcript if not captured via streaming.
           // The Gateway stores "Reasoning:" prefixed messages in the transcript
           // but does NOT emit them via WebSocket events.
-          const hasThinking = useChatStore.getState().thinkingText;
           if (!hasThinking) {
             this.fetchReasoningFromHistory(mId);
           }

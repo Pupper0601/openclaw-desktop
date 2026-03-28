@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { startPolling, stopPolling } from '@/stores/gatewayDataStore';
+import { useNotificationStore } from '@/stores/notificationStore';
 import { APP_VERSION } from '@/hooks/useAppVersion';
 import i18n from '@/i18n';
 
@@ -240,10 +241,21 @@ export class GatewayConnection {
       console.log('[GW] Closed:', event.code, event.reason);
       this.stopHeartbeat();
       stopPolling();
+      const wasConnected = this.connected;
       this.connected = false;
       this.connecting = false;
       this.ws = null;
       this.emitStatus();
+
+      // Notify on unexpected disconnect (not initial connect failure)
+      if (wasConnected && event.code !== 1000) {
+        useNotificationStore.getState().addNotification({
+          category: 'system',
+          severity: 'error',
+          title: 'Gateway Disconnected',
+          body: `Code ${event.code}${event.reason ? ': ' + event.reason : ''}`,
+        });
+      }
 
       // Close code 1008 = pairing required (Gateway scope rejection)
       if (event.code === 1008) {
@@ -321,10 +333,22 @@ export class GatewayConnection {
           if (auth?.deviceToken && window.aegis?.pairing?.saveToken) {
             window.aegis.pairing.saveToken(auth.deviceToken).catch(() => {});
           }
+          const wasReconnect = this.reconnectAttempt > 0;
           this.connected = true;
           this.connecting = false;
           this.reconnectAttempt = 0;
           this.pairingRequired = false;
+
+          // Notify on successful reconnect (not initial connect)
+          if (wasReconnect) {
+            useNotificationStore.getState().addNotification({
+              category: 'system',
+              severity: 'success',
+              title: 'Gateway Reconnected',
+              body: 'Connection restored',
+              showToast: true,
+            });
+          }
           if (this.pairingRetryTimer) {
             clearTimeout(this.pairingRetryTimer);
             this.pairingRetryTimer = null;
@@ -362,6 +386,7 @@ export class GatewayConnection {
     let device: any = undefined;
     try {
       if (window.aegis?.device?.sign && this.challengeNonce) {
+        // v3 signature: includes platform + deviceFamily for stronger binding
         const signed = await window.aegis.device.sign({
           nonce: this.challengeNonce,
           clientId,
@@ -369,6 +394,8 @@ export class GatewayConnection {
           role: 'operator',
           scopes,
           token: this.token || '',
+          platform: detectPlatform(),
+          deviceFamily: 'desktop',
         });
         if (signed.signature) {
           device = {
@@ -378,7 +405,7 @@ export class GatewayConnection {
             signedAt: signed.signedAt,
             nonce: signed.nonce,
           };
-          console.log('[GW] 🔑 Device identity attached (v2):', signed.deviceId.substring(0, 16) + '...');
+          console.log('[GW] 🔑 Device identity attached (v3):', signed.deviceId.substring(0, 16) + '...');
         } else {
           console.warn('[GW] Device signing returned no signature — skipping device auth');
         }

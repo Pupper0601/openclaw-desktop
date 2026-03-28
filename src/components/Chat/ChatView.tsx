@@ -528,7 +528,7 @@ export function ChatView() {
       )}
 
       {/* Exec Approval Requests */}
-      <ExecApprovalBar />
+      {/* Exec approvals moved to global AppLayout — visible on all pages */}
 
       {/* Context Usage Bar */}
       {tokenUsage && tokenUsage.percentage > 0 && (
@@ -599,38 +599,4 @@ function PinnedMessagesBar() {
   );
 }
 
-// ── Exec Approval Bar ──
-function ExecApprovalBar() {
-  const approvals = useChatStore((s) => s.execApprovals);
-  const removeApproval = useChatStore((s) => s.removeExecApproval);
-
-  if (approvals.length === 0) return null;
-
-  return (
-    <div className="shrink-0 flex flex-col gap-1.5 px-4 py-2 border-t border-aegis-border/10">
-      {approvals.map((a) => (
-        <div key={a.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-amber-500/8 border border-amber-500/15">
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] text-amber-400 font-medium mb-0.5">⚡ Exec Approval Required</div>
-            <code className="text-[12px] text-aegis-text block truncate" title={a.command}>{a.command}</code>
-            {a.cwd && <span className="text-[10px] text-aegis-text-dim">in {a.cwd}</span>}
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <button
-              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'allow-once'); } catch {} removeApproval(a.id); }}
-              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/20 transition-colors"
-            >Allow Once</button>
-            <button
-              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'allow-always'); } catch {} removeApproval(a.id); }}
-              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-blue-500/15 text-blue-400 hover:bg-blue-500/25 border border-blue-500/20 transition-colors"
-            >Always</button>
-            <button
-              onClick={async () => { try { await gateway.resolveExecApproval(a.id, 'deny'); } catch {} removeApproval(a.id); }}
-              className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/15 transition-colors"
-            >Deny</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
+// ExecApprovalBar moved to src/components/shared/ExecApprovalBar.tsx (global)

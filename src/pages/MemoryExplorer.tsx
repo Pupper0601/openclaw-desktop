@@ -695,6 +695,14 @@ export function MemoryExplorerPage() {
   const API = memoryApiUrl || 'http://localhost:3040';
   const isLocal = memoryMode === 'local';
 
+  // ── Stats ──
+  const [stats, setStats] = useState<any>(null);
+
+  useEffect(() => {
+    if (isLocal) return;
+    fetch(`${API}/stats`).then(r => r.json()).then(setStats).catch(() => {});
+  }, [API, isLocal]);
+
   // ── State ──
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -816,7 +824,26 @@ export function MemoryExplorerPage() {
   };
 
   return (
-    <div className="flex flex-1 min-h-0" style={{ minHeight: 'calc(100vh - 140px)' }}>
+    <div className="flex flex-col flex-1 min-h-0" style={{ minHeight: 'calc(100vh - 140px)' }}>
+
+      {/* ═══ Stats Bar ═══ */}
+      {stats && !isLocal && (
+        <div className="flex gap-3 px-5 py-3 border-b border-[rgb(var(--aegis-overlay)/0.06)] shrink-0">
+          {[
+            { value: stats.memories?.total?.toLocaleString() || '—', label: 'Memories' },
+            { value: stats.messages?.total?.toLocaleString() || '—', label: 'Messages' },
+            { value: stats.relations?.toLocaleString() || '—', label: 'KG Relations' },
+            { value: stats.memories?.coverage ? `${stats.memories.coverage}%` : '—', label: 'Embeddings' },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg bg-[rgb(var(--aegis-overlay)/0.02)] border border-[rgb(var(--aegis-overlay)/0.04)]">
+              <span className="text-[16px] font-bold text-aegis-text font-mono">{s.value}</span>
+              <span className="text-[9px] text-aegis-text-dim uppercase tracking-wider">{s.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-1 min-h-0">
 
       {/* ═══ Sidebar ═══ */}
       <div className="w-[260px] shrink-0 border-e border-[rgb(var(--aegis-overlay)/0.06)] bg-[rgb(var(--aegis-overlay)/0.01)] flex flex-col overflow-hidden">
@@ -972,6 +999,7 @@ export function MemoryExplorerPage() {
           />
         )}
       </AnimatePresence>
+    </div>
     </div>
   );
 }

@@ -19,9 +19,6 @@ import { createTray } from './tray';
 import { initI18n, setLanguage, t } from './i18n';
 import * as crypto from 'crypto';
 
-// Allow connections to gateways behind self-signed SSL certs.
-// Without this, Node.js fetch (used for pairing) silently rejects HTTPS.
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 import { execFileSync, spawnSync, execSync } from 'child_process';
 // node-pty: dynamic require — graceful fallback if native module unavailable
 let pty: typeof import('node-pty') | null = null;
@@ -1467,5 +1464,5 @@ app.on('before-quit', () => {
   ptyProcesses.clear();
 });
 
-console.log('Æ AEGIS Desktop v5.6.2 started');
+console.log('Æ AEGIS Desktop v5.7.0 started');
 

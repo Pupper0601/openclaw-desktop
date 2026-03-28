@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useNotificationStore } from './notificationStore';
 
 // ═══════════════════════════════════════════════════════════
 // Gateway Data Store — Central data layer for all pages
@@ -79,6 +80,15 @@ export interface SessionsUsage {
   [k: string]: any;
 }
 
+export interface HealthInfo {
+  version?: string;
+  uptime?: number;       // seconds
+  model?: string;
+  activeSessions?: number;
+  channels?: Array<{ name: string; status: string; account?: string }>;
+  lastHeartbeat?: string;
+}
+
 export interface CronJob {
   id: string;
   name?: string;
@@ -114,6 +124,7 @@ interface GatewayDataState {
   sessionsUsage: SessionsUsage | null;
   cronJobs: CronJob[];
   runningSubAgents: RunningSubAgent[];
+  health: HealthInfo | null;
 
   // Timestamps (ms) — when each group was last fetched
   lastFetch: {
@@ -122,6 +133,7 @@ interface GatewayDataState {
     cost: number;
     usage: number;
     cron: number;
+    health: number;
   };
 
   // Loading states per group
@@ -153,6 +165,7 @@ interface GatewayDataState {
   setCostSummary: (data: CostSummary) => void;
   setSessionsUsage: (data: SessionsUsage) => void;
   setCronJobs: (jobs: CronJob[]) => void;
+  setHealth: (info: HealthInfo) => void;
 
   setLoading: (group: keyof GatewayDataState['loading'], val: boolean) => void;
   setError: (group: keyof GatewayDataState['errors'], err: string | null) => void;
@@ -177,9 +190,10 @@ export const useGatewayDataStore = create<GatewayDataState>((set, get) => ({
   sessionsUsage: null,
   cronJobs: [],
   runningSubAgents: [],
+  health: null,
 
   // Timestamps
-  lastFetch: { sessions: 0, agents: 0, cost: 0, usage: 0, cron: 0 },
+  lastFetch: { sessions: 0, agents: 0, cost: 0, usage: 0, cron: 0, health: 0 },
 
   // Loading
   loading: { sessions: false, agents: false, cost: false, usage: false, cron: false },
@@ -231,6 +245,12 @@ export const useGatewayDataStore = create<GatewayDataState>((set, get) => ({
       errors: { ...get().errors, cron: null },
     }),
 
+  setHealth: (info) =>
+    set({
+      health: info,
+      lastFetch: { ...get().lastFetch, health: Date.now() },
+    }),
+
   setLoading: (group, val) =>
     set({ loading: { ...get().loading, [group]: val } }),
 
@@ -257,7 +277,7 @@ export const useGatewayDataStore = create<GatewayDataState>((set, get) => ({
 // Polling intervals (ms)
 const FAST_INTERVAL  = 10_000;   // 10s — sessions
 const MID_INTERVAL   = 30_000;   // 30s — agents + cron
-const SLOW_INTERVAL  = 120_000;  // 120s — cost + usage
+const SLOW_INTERVAL  = 300_000;  // 300s (5min) — cost + usage (these APIs take 20-60s each)
 
 let fastTimer:  ReturnType<typeof setInterval> | null = null;
 let midTimer:   ReturnType<typeof setInterval> | null = null;
@@ -265,7 +285,7 @@ let slowTimer:  ReturnType<typeof setInterval> | null = null;
 
 // Reference to gateway connection (set by startPolling)
 // Uses request() directly to avoid circular imports with gateway facade
-let gw: { request: (method: string, params: any) => Promise<any> } | null = null;
+let gw: { request: (method: string, params: any) => Promise<any>; getHttpBaseUrl?: () => string } | null = null;
 
 // ── Fetch functions ──────────────────────────────────────
 
@@ -347,8 +367,46 @@ async function tickFast() {
   syncRunningSubAgents();
 }
 
+async function fetchHealth() {
+  if (!gw) return;
+  const store = useGatewayDataStore.getState();
+  const sessions = store.sessions;
+  const mainSession = sessions.find((s: any) => s.key === 'agent:main:main');
+
+  // Fetch uptime from HTTP /readyz (no auth needed, lightweight)
+  let uptimeSeconds: number | undefined;
+  try {
+    const httpBase = (gw as any).getHttpBaseUrl?.() || 'http://127.0.0.1:18789';
+    const res = await fetch(`${httpBase}/readyz`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.uptimeMs) uptimeSeconds = Math.floor(data.uptimeMs / 1000);
+    }
+  } catch { /* silent */ }
+
+  // Fetch channel statuses from WS (may not exist)
+  let channels: Array<{ name: string; status: string }> = [];
+  try {
+    const res = await gw.request('channels.status', {});
+    if (Array.isArray(res?.channels)) {
+      channels = res.channels.map((ch: any) => ({
+        name: ch.name || ch.channel || ch.provider,
+        status: ch.status || (ch.running ? 'connected' : 'disconnected'),
+      }));
+    }
+  } catch { /* channels.status may not exist */ }
+
+  store.setHealth({
+    version: undefined, // Not available via lightweight endpoints
+    uptime: uptimeSeconds,
+    model: mainSession?.model,
+    activeSessions: sessions.length,
+    channels,
+  });
+}
+
 async function tickMid() {
-  await Promise.allSettled([fetchAgents(), fetchCron()]);
+  await Promise.allSettled([fetchAgents(), fetchCron(), fetchHealth()]);
 }
 
 async function tickSlow() {
@@ -559,11 +617,21 @@ export function handleGatewayEvent(event: string, payload: any) {
     case 'cron.run.finished': {
       const jobId = payload?.jobId || payload?.id;
       if (!jobId) break;
+      const job = store.cronJobs.find((j) => j.id === jobId);
       store.setCronJobs(
         store.cronJobs.map((j) => j.id === jobId
           ? { ...j, state: 'idle', lastRun: new Date().toISOString() }
           : j)
       );
+      const status = payload?.status || payload?.runStatus || 'completed';
+      const failed = status === 'error' || status === 'failed';
+      useNotificationStore.getState().addNotification({
+        category: 'cron-result',
+        severity: failed ? 'error' : 'success',
+        title: `Cron ${failed ? 'Failed' : 'Completed'}`,
+        body: job?.name || jobId,
+        route: '/cron',
+      });
       console.log('[DataStore] 📡 Cron completed:', jobId);
       break;
     }
