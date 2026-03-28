@@ -26,9 +26,10 @@ jobs:
   准备构建:
     runs-on: ubuntu-latest
     outputs:
-      需要发布: ${{ steps.设置.outputs.需要发布 }}
-      版本号: ${{ steps.设置.outputs.版本号 }}
-      更新说明: ${{ steps.设置.outputs.更新说明 }}
+      需要发布: ${{ steps.setup.outputs.need_release }}
+      版本号: ${{ steps.setup.outputs.version }}
+      更新说明: ${{ steps.setup.outputs.release_notes }}
+      触发源: ${{ steps.setup.outputs.trigger_source }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -36,39 +37,39 @@ jobs:
           fetch-depth: 0
 
       - name: 设置构建参数
-        id: 设置
+        id: setup
         run: |
           # 判断是否需要发布
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "需要发布=${{ github.event.client_payload.需要发布 }}" >> $GITHUB_OUTPUT
-            echo "触发源=${{ github.event.client_payload.触发源 }}" >> $GITHUB_OUTPUT
+            echo "need_release=${{ github.event.client_payload.需要发布 }}" >> $GITHUB_OUTPUT
+            echo "trigger_source=${{ github.event.client_payload.触发源 }}" >> $GITHUB_OUTPUT
           else
-            echo "需要发布=${{ github.event.inputs.发布版本 }}" >> $GITHUB_OUTPUT
-            echo "触发源=手动触发" >> $GITHUB_OUTPUT
+            echo "need_release=${{ github.event.inputs.发布版本 }}" >> $GITHUB_OUTPUT
+            echo "trigger_source=手动触发" >> $GITHUB_OUTPUT
           fi
           
           # 生成版本号
           if [ -n "${{ github.event.inputs.版本号 }}" ]; then
-            echo "版本号=${{ github.event.inputs.版本号 }}" >> $GITHUB_OUTPUT
+            echo "version=${{ github.event.inputs.版本号 }}" >> $GITHUB_OUTPUT
           else
-            echo "版本号=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
+            echo "version=1.0.${{ github.run_number }}" >> $GITHUB_OUTPUT
           fi
           
           # 获取更新说明
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.更新说明 }}" ]; then
-            echo "更新说明=${{ github.event.inputs.更新说明 }}" >> $GITHUB_OUTPUT
+            echo "release_notes=${{ github.event.inputs.更新说明 }}" >> $GITHUB_OUTPUT
           else
             # 自动构建时获取上游更新内容
-            echo "更新说明=自动构建发布" >> $GITHUB_OUTPUT
+            echo "release_notes=自动构建发布" >> $GITHUB_OUTPUT
           fi
 
       - name: 生成上游更新日志
         if: github.event_name == 'repository_dispatch'
-        id: 更新日志
+        id: changelog
         run: |
           if [ -n "${{ github.event.client_payload.上游消息 }}" ]; then
             # 这里可以添加翻译逻辑
-            echo "上游更新内容=${{ github.event.client_payload.上游消息 }}" >> $GITHUB_OUTPUT
+            echo "upstream_changes=${{ github.event.client_payload.上游消息 }}" >> $GITHUB_OUTPUT
             echo "已获取上游更新信息"
           fi
 
@@ -137,7 +138,7 @@ jobs:
   发布:
     runs-on: ubuntu-latest
     needs: [准备构建, 构建Windows, 构建macOS]
-    if: needs.准备构建.outputs.需要发布 == 'true'
+    if: needs.准备构建.outputs.need_release == 'true'
     permissions:
       contents: write
     steps:
@@ -150,19 +151,19 @@ jobs:
           path: 构建产物
 
       - name: 准备发布说明
-        id: 说明
+        id: notes
         run: |
           # 创建发布说明
           cat > 发布说明.md << EOF
-          ## 版本 v${{ needs.准备构建.outputs.版本号 }}
+          ## 版本 v${{ needs.准备构建.outputs.version }}
           
           ### 更新内容
           
-          ${{ needs.准备构建.outputs.更新说明 }}
+          ${{ needs.准备构建.outputs.release_notes }}
           
           ### 构建信息
           
-          - 触发源: ${{ needs.准备构建.outputs.触发源 }}
+          - 触发源: ${{ needs.准备构建.outputs.trigger_source }}
           - 构建时间: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           - 提交: ${{ github.sha }}
           
@@ -177,8 +178,8 @@ jobs:
       - name: 创建GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ needs.准备构建.outputs.版本号 }}
-          name: 版本 v${{ needs.准备构建.outputs.版本号 }}
+          tag_name: v${{ needs.准备构建.outputs.version }}
+          name: 版本 v${{ needs.准备构建.outputs.version }}
           body_path: 发布说明.md
           files: 构建产物/**/*
           draft: false

@@ -17,8 +17,8 @@ jobs:
       contents: write
       pull-requests: write
     outputs:
-      状态: ${{ steps.合并.outputs.状态 }}
-      有冲突: ${{ steps.合并.outputs.有冲突 }}
+      状态: ${{ steps.merge.outputs.status }}
+      有冲突: ${{ steps.merge.outputs.has_conflict }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -37,32 +37,32 @@ jobs:
           git fetch upstream
 
       - name: 合并上游更新
-        id: 合并
+        id: merge
         run: |
           # 检查是否已是最新
-          本地提交=$(git rev-parse HEAD)
-          上游提交=${{ github.event.client_payload.上游提交 || github.event.inputs.上游提交 || 'upstream/master' }}
+          local_commit=$(git rev-parse HEAD)
+          upstream_commit=${{ github.event.client_payload.上游提交 || github.event.inputs.上游提交 || 'upstream/master' }}
           
-          if [ "$本地提交" = "$上游提交" ]; then
-            echo "状态=已是最新" >> $GITHUB_OUTPUT
+          if [ "$local_commit" = "$upstream_commit" ]; then
+            echo "status=up_to_date" >> $GITHUB_OUTPUT
             echo "✅ 已经是最新版本"
             exit 0
           fi
 
           # 尝试合并
           if git merge upstream/master --no-edit; then
-            echo "状态=成功" >> $GITHUB_OUTPUT
-            echo "有冲突=false" >> $GITHUB_OUTPUT
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "has_conflict=false" >> $GITHUB_OUTPUT
             echo "✅ 自动合并成功"
             
             # 获取合并的提交信息
-            上游消息=$(git log upstream/master -1 --pretty=format:"%s")
-            echo "上游消息=$上游消息" >> $GITHUB_OUTPUT
+            upstream_message=$(git log upstream/master -1 --pretty=format:"%s")
+            echo "upstream_message=$upstream_message" >> $GITHUB_OUTPUT
             
             git push origin HEAD
           else
-            echo "状态=失败" >> $GITHUB_OUTPUT
-            echo "有冲突=true" >> $GITHUB_OUTPUT
+            echo "status=failed" >> $GITHUB_OUTPUT
+            echo "has_conflict=true" >> $GITHUB_OUTPUT
             echo "🔄 自动合并失败，存在冲突"
             
             # 创建冲突分支
@@ -71,31 +71,31 @@ jobs:
           fi
 
       - name: 检查翻译文件变更
-        if: steps.合并.outputs.状态 == '成功'
-        id: 检查翻译
+        if: steps.merge.outputs.status == 'success'
+        id: check_translation
         run: |
           # 检查 en.json 是否有变更
           if git diff HEAD^1 HEAD --name-only | grep -q "src/locales/en.json"; then
-            echo "有变更=true" >> $GITHUB_OUTPUT
+            echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "📝 检测到翻译文件有更新"
           else
-            echo "有变更=false" >> $GITHUB_OUTPUT
+            echo "has_changes=false" >> $GITHUB_OUTPUT
             echo "✅ 翻译文件无变更"
           fi
 
       - name: 设置Node.js
-        if: steps.检查翻译.outputs.有变更 == 'true'
+        if: steps.check_translation.outputs.has_changes == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: 安装依赖
-        if: steps.检查翻译.outputs.有变更 == 'true'
+        if: steps.check_translation.outputs.has_changes == 'true'
         run: npm ci
 
       - name: 自动翻译新增内容
-        if: steps.检查翻译.outputs.有变更 == 'true'
+        if: steps.check_translation.outputs.has_changes == 'true'
         env:
           BAIDU_API_KEY: 0D5P_d73tjvrb1hv2c1drokfg
         run: |
@@ -237,14 +237,14 @@ jobs:
           node scripts/auto-translate.js
 
       - name: 提交翻译更新
-        if: steps.检查翻译.outputs.有变更 == 'true'
+        if: steps.check_translation.outputs.has_changes == 'true'
         run: |
           git add src/locales/zh.json
           git commit -m "自动翻译: 更新中文翻译文件" || echo "没有更改可提交"
           git push origin HEAD
 
       - name: 发送冲突通知
-        if: steps.合并.outputs.有冲突 == 'true'
+        if: steps.merge.outputs.has_conflict == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -266,7 +266,7 @@ jobs:
             });
 
       - name: 创建冲突PR
-        if: steps.合并.outputs.有冲突 == 'true'
+        if: steps.merge.outputs.has_conflict == 'true'
         run: |
           gh pr create \
             --base master \
@@ -277,7 +277,7 @@ jobs:
           GH_TOKEN: ${{ secrets.PAT }}
 
       - name: 触发构建工作流
-        if: steps.合并.outputs.状态 == '成功'
+        if: steps.merge.outputs.status == 'success'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.PAT }}
@@ -293,12 +293,12 @@ jobs:
         run: |
           echo "## 合并结果" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ steps.合并.outputs.状态 }}" = "成功" ]; then
+          if [ "${{ steps.merge.outputs.status }}" = "success" ]; then
             echo "### ✅ 自动合并成功" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ steps.检查翻译.outputs.有变更 }}" = "true" ]; then
+            if [ "${{ steps.check_translation.outputs.has_changes }}" = "true" ]; then
               echo "📝 已自动翻译并更新中文翻译文件。" >> $GITHUB_STEP_SUMMARY
             fi
-          elif [ "${{ steps.合并.outputs.状态 }}" = "已是最新" ]; then
+          elif [ "${{ steps.merge.outputs.status }}" = "up_to_date" ]; then
             echo "### ✅ 已经是最新版本" >> $GITHUB_STEP_SUMMARY
           else
             echo "### ⚠️ 需要手动解决冲突" >> $GITHUB_STEP_SUMMARY

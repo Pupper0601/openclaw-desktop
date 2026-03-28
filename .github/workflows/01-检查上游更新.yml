@@ -9,7 +9,7 @@ jobs:
   检查更新:
     runs-on: ubuntu-latest
     outputs:
-      状态: ${{ steps.检查.outputs.状态 }}
+      状态: ${{ steps.check.outputs.status }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -27,43 +27,43 @@ jobs:
           git fetch upstream
 
       - name: 检查上游更新
-        id: 检查
+        id: check
         run: |
-          本地提交=$(git rev-parse HEAD)
-          上游提交=$(git rev-parse upstream/master)
+          local_commit=$(git rev-parse HEAD)
+          upstream_commit=$(git rev-parse upstream/master)
           
-          if [ "$本地提交" = "$上游提交" ]; then
-            echo "状态=已是最新" >> $GITHUB_OUTPUT
+          if [ "$local_commit" = "$upstream_commit" ]; then
+            echo "status=up_to_date" >> $GITHUB_OUTPUT
             echo "✅ 已经是最新版本"
           else
-            echo "状态=有更新" >> $GITHUB_OUTPUT
-            echo "本地提交=$本地提交" >> $GITHUB_OUTPUT
-            echo "上游提交=$上游提交" >> $GITHUB_OUTPUT
+            echo "status=has_updates" >> $GITHUB_OUTPUT
+            echo "local_commit=$local_commit" >> $GITHUB_OUTPUT
+            echo "upstream_commit=$upstream_commit" >> $GITHUB_OUTPUT
             echo "🔄 发现上游有新更新"
           fi
 
       - name: 触发合并工作流
-        if: steps.检查.outputs.状态 == '有更新'
+        if: steps.check.outputs.status == 'has_updates'
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.PAT }}
           event-type: 上游更新可用
           client-payload: |
             {
-              "本地提交": "${{ steps.检查.outputs.本地提交 }}",
-              "上游提交": "${{ steps.检查.outputs.上游提交 }}",
+              "本地提交": "${{ steps.check.outputs.local_commit }}",
+              "上游提交": "${{ steps.check.outputs.upstream_commit }}",
               "触发源": "定时检查"
             }
 
       - name: 生成报告
         run: |
-          if [ "${{ steps.检查.outputs.状态 }}" = "已是最新" ]; then
+          if [ "${{ steps.check.outputs.status }}" = "up_to_date" ]; then
             echo "## ✅ 已是最新版本" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "当前分支已与上游保持同步。" >> $GITHUB_STEP_SUMMARY
           else
             echo "## 🔄 发现上游更新" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "本地提交: ${{ steps.检查.outputs.本地提交 }}" >> $GITHUB_STEP_SUMMARY
-            echo "上游提交: ${{ steps.检查.outputs.上游提交 }}" >> $GITHUB_STEP_SUMMARY
+            echo "本地提交: ${{ steps.check.outputs.local_commit }}" >> $GITHUB_STEP_SUMMARY
+            echo "上游提交: ${{ steps.check.outputs.upstream_commit }}" >> $GITHUB_STEP_SUMMARY
           fi
