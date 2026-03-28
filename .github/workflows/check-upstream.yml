@@ -20,7 +20,7 @@ jobs:
 
       - name: 添加上游远程仓库
         run: |
-          git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop.git || true
+          git remote add upstream https://github.com/rshodoskar-star/openclaw-desktop || true
           git fetch upstream
 
       - name: 检查是否有更新
